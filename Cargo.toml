@@ -1,5 +1,13 @@
 [workspace]
-members = ["crates/core", "crates/strikes", "crates/movegen", "apps/oopsmate"]
+members = [
+    "crates/core",
+    "crates/strikes",
+    "crates/movegen",
+    "crates/eval",
+    "crates/memory",
+    "crates/search",
+    "apps/oopsmate",
+]
 resolver = "2"
 
 [workspace.package]

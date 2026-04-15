@@ -7,6 +7,17 @@ name = "oopsmate-core"
 version = "0.1.0"
 
 [[package]]
+name = "oopsmate-eval"
+version = "0.1.0"
+dependencies = [
+ "oopsmate-core",
+]
+
+[[package]]
+name = "oopsmate-memory"
+version = "0.1.0"
+
+[[package]]
 name = "oopsmate-movegen"
 version = "0.1.0"
 dependencies = [
@@ -15,10 +26,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "oopsmate-search"
+version = "0.1.0"
+dependencies = [
+ "oopsmate-core",
+ "oopsmate-eval",
+ "oopsmate-movegen",
+]
+
+[[package]]
 name = "oopsmate-v2"
 version = "0.1.0"
 dependencies = [
  "oopsmate-core",
+ "oopsmate-eval",
+ "oopsmate-movegen",
+ "oopsmate-search",
 ]
 
 [[package]]

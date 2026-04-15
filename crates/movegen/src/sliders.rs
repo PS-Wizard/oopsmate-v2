@@ -8,9 +8,31 @@ use crate::util::{piece_bb, pop_lsb};
 
 #[inline(always)]
 pub(crate) fn generate<const STAGE: u8>(pos: &Position, analysis: &Analysis, list: &mut MoveList) {
-    generate_bishops::<STAGE>(piece_bb(pos, Piece::Bishop, analysis.us), analysis, list);
-    generate_rooks::<STAGE>(piece_bb(pos, Piece::Rook, analysis.us), analysis, list);
-    generate_queens::<STAGE>(piece_bb(pos, Piece::Queen, analysis.us), analysis, list);
+    let enemy_king = pos.board().king_square(analysis.them);
+    let enemy_king_bit = if enemy_king.is_valid() {
+        enemy_king.bit()
+    } else {
+        0
+    };
+
+    generate_bishops::<STAGE>(
+        piece_bb(pos, Piece::Bishop, analysis.us),
+        analysis,
+        enemy_king_bit,
+        list,
+    );
+    generate_rooks::<STAGE>(
+        piece_bb(pos, Piece::Rook, analysis.us),
+        analysis,
+        enemy_king_bit,
+        list,
+    );
+    generate_queens::<STAGE>(
+        piece_bb(pos, Piece::Queen, analysis.us),
+        analysis,
+        enemy_king_bit,
+        list,
+    );
 }
 
 // These are specialized per-piece instead of using a shared function-pointer
@@ -18,7 +40,12 @@ pub(crate) fn generate<const STAGE: u8>(pos: &Position, analysis: &Analysis, lis
 macro_rules! define_slider_generator {
     ($name:ident, $attack_fn:ident) => {
         #[inline(always)]
-        fn $name<const STAGE: u8>(mut pieces: u64, analysis: &Analysis, list: &mut MoveList) {
+        fn $name<const STAGE: u8>(
+            mut pieces: u64,
+            analysis: &Analysis,
+            enemy_king_bit: u64,
+            list: &mut MoveList,
+        ) {
             let empty = !analysis.occ;
 
             while pieces != 0 {
@@ -29,6 +56,8 @@ macro_rules! define_slider_generator {
                 if analysis.is_pinned(from) {
                     attacks &= analysis.pin_ray(from);
                 }
+
+                attacks &= !enemy_king_bit;
 
                 if include_captures::<STAGE>() && include_quiets::<STAGE>() {
                 } else if include_captures::<STAGE>() {

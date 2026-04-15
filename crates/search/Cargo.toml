@@ -1,0 +1,16 @@
+[package]
+name = "oopsmate-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description.workspace = true
+
+[lib]
+name = "oopsmate_search"
+path = "src/lib.rs"
+
+[dependencies]
+oopsmate-core = { path = "../core" }
+oopsmate-eval = { path = "../eval" }
+oopsmate-movegen = { path = "../movegen" }

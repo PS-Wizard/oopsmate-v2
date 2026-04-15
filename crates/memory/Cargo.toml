@@ -1,0 +1,13 @@
+[package]
+name = "oopsmate-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description.workspace = true
+
+[lib]
+name = "oopsmate_memory"
+path = "src/lib.rs"
+
+[dependencies]

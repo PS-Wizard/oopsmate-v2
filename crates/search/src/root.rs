@@ -4,9 +4,9 @@ use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_movegen::{MoveList, generate_all};
 
+use crate::alphabeta::{in_check, search_node};
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
-use crate::minimax::{in_check, search_node};
 use crate::types::{SearchResult, mate_score};
 
 const MAX_SEARCH_DEPTH: u8 = 64;
@@ -90,7 +90,8 @@ fn search_root<E: Evaluator>(
     evaluator: &E,
 ) -> Result<(Move, i32), SearchInterrupted> {
     let mut best_move = moves[0];
-    let mut best_score = i32::MIN / 2;
+    let mut alpha = i32::MIN / 2;
+    let beta = i32::MAX / 2;
 
     for &mv in moves {
         if ctx.should_stop_now() {
@@ -98,7 +99,7 @@ fn search_root<E: Evaluator>(
         }
 
         pos.make_move(mv);
-        let score = match search_node(pos, depth - 1, 1, ctx, evaluator) {
+        let score = match search_node(pos, depth - 1, 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(mv);
@@ -107,11 +108,11 @@ fn search_root<E: Evaluator>(
         };
         pos.unmake_move(mv);
 
-        if score > best_score {
-            best_score = score;
+        if score > alpha {
+            alpha = score;
             best_move = mv;
         }
     }
 
-    Ok((best_move, best_score))
+    Ok((best_move, alpha))
 }

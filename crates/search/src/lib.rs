@@ -1,6 +1,6 @@
+mod alphabeta;
 mod control;
 mod limits;
-mod minimax;
 mod root;
 mod types;
 

@@ -9,6 +9,8 @@ pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
     depth: u8,
     ply: u8,
+    mut alpha: i32,
+    beta: i32,
     ctx: &mut SearchContext<'_>,
     evaluator: &E,
 ) -> Result<i32, SearchInterrupted> {
@@ -18,10 +20,8 @@ pub(crate) fn search_node<E: Evaluator>(
         return Ok(0);
     }
 
-    if depth == 0 {
-        if !in_check(pos) {
-            return Ok(evaluator.evaluate(pos));
-        }
+    if depth == 0 && !in_check(pos) {
+        return Ok(evaluator.evaluate(pos));
     }
 
     let mut moves = MoveList::new();
@@ -35,10 +35,9 @@ pub(crate) fn search_node<E: Evaluator>(
         return Ok(evaluator.evaluate(pos));
     }
 
-    let mut best = i32::MIN / 2;
     for &mv in moves.as_slice() {
         pos.make_move(mv);
-        let score = match search_node(pos, depth - 1, ply + 1, ctx, evaluator) {
+        let score = match search_node(pos, depth - 1, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(mv);
@@ -47,12 +46,16 @@ pub(crate) fn search_node<E: Evaluator>(
         };
         pos.unmake_move(mv);
 
-        if score > best {
-            best = score;
+        if score >= beta {
+            return Ok(score);
+        }
+
+        if score > alpha {
+            alpha = score;
         }
     }
 
-    Ok(best)
+    Ok(alpha)
 }
 
 #[inline(always)]

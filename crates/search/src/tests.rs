@@ -23,6 +23,15 @@ fn depth_one_prefers_winning_the_queen() {
     assert_eq!(to_uci(result.best_move.unwrap()), "d1d2");
 }
 
+#[test]
+fn depth_two_still_finds_mate_in_one() {
+    let pos = Position::from_fen("7k/6Q1/6K1/8/8/8/8/8 w - - 0 1").unwrap();
+    let stop = AtomicBool::new(false);
+    let result = search(&pos, SearchLimits::depth(2), &stop, &MaterialEval);
+
+    assert_eq!(mate_in(result.score), Some(1));
+}
+
 fn to_uci(mv: Move) -> String {
     let from = mv.from();
     let to = mv.to();

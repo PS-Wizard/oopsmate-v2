@@ -161,23 +161,6 @@ impl Position {
     }
 
     #[inline(always)]
-    fn updated_castling_rights(
-        castling: CastlingRights,
-        moved_piece: Piece,
-        moved_color: Color,
-        from: Square,
-        to: Square,
-    ) -> CastlingRights {
-        let mut updated = castling;
-        if moved_piece == Piece::King {
-            updated.remove_color(moved_color);
-        }
-        updated.remove_rook_square(from);
-        updated.remove_rook_square(to);
-        updated
-    }
-
-    #[inline(always)]
     pub fn make_move(&mut self, mv: Move) {
         let from = mv.from();
         let to = mv.to();
@@ -299,8 +282,7 @@ impl Position {
             }
         }
 
-        let new_castling =
-            Self::updated_castling_rights(old_castling, moved_piece, moved_color, from, to);
+        let new_castling = old_castling.updated_for_move(moved_piece, moved_color, from, to);
         if new_castling != old_castling {
             self.hash ^= castling_key(old_castling.0);
             self.castling = new_castling;

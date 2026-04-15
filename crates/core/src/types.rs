@@ -149,6 +149,35 @@ impl Square {
     }
 }
 
+const fn generate_rook_square_keep_masks() -> [u8; 64] {
+    let mut masks = [0b1111u8; 64];
+    masks[0] &= !CastlingRights::WHITE_QUEENSIDE;
+    masks[7] &= !CastlingRights::WHITE_KINGSIDE;
+    masks[56] &= !CastlingRights::BLACK_QUEENSIDE;
+    masks[63] &= !CastlingRights::BLACK_KINGSIDE;
+    masks
+}
+
+const ROOK_SQUARE_KEEP_MASKS: [u8; 64] = generate_rook_square_keep_masks();
+const KING_MOVE_KEEP_MASKS: [[u8; 6]; 2] = [
+    [
+        0b1111,
+        0b1111,
+        0b1111,
+        0b1111,
+        0b1111,
+        !(CastlingRights::WHITE_KINGSIDE | CastlingRights::WHITE_QUEENSIDE),
+    ],
+    [
+        0b1111,
+        0b1111,
+        0b1111,
+        0b1111,
+        0b1111,
+        !(CastlingRights::BLACK_KINGSIDE | CastlingRights::BLACK_QUEENSIDE),
+    ],
+];
+
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub struct CastlingRights(pub u8);
@@ -180,21 +209,34 @@ impl CastlingRights {
 
     #[inline(always)]
     pub fn remove_color(&mut self, color: Color) {
-        match color {
-            Color::White => self.0 &= !(Self::WHITE_KINGSIDE | Self::WHITE_QUEENSIDE),
-            Color::Black => self.0 &= !(Self::BLACK_KINGSIDE | Self::BLACK_QUEENSIDE),
-        }
+        self.0 &= match color {
+            Color::White => !(Self::WHITE_KINGSIDE | Self::WHITE_QUEENSIDE),
+            Color::Black => !(Self::BLACK_KINGSIDE | Self::BLACK_QUEENSIDE),
+        };
     }
 
     #[inline(always)]
     pub fn remove_rook_square(&mut self, square: Square) {
-        match square.raw() {
-            0 => self.0 &= !Self::WHITE_QUEENSIDE,
-            7 => self.0 &= !Self::WHITE_KINGSIDE,
-            56 => self.0 &= !Self::BLACK_QUEENSIDE,
-            63 => self.0 &= !Self::BLACK_KINGSIDE,
-            _ => {}
+        if square.is_valid() {
+            self.0 &= ROOK_SQUARE_KEEP_MASKS[square.index()];
         }
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub const fn updated_for_move(
+        self,
+        moved_piece: Piece,
+        moved_color: Color,
+        from: Square,
+        to: Square,
+    ) -> Self {
+        Self(
+            self.0
+                & KING_MOVE_KEEP_MASKS[moved_color.index()][moved_piece.index()]
+                & ROOK_SQUARE_KEEP_MASKS[from.index()]
+                & ROOK_SQUARE_KEEP_MASKS[to.index()],
+        )
     }
 }
 

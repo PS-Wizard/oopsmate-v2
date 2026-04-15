@@ -1,0 +1,11 @@
+[package]
+name = "strikes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+doctest = false

@@ -12,3 +12,7 @@ version = "0.1.0"
 dependencies = [
  "oopsmate-core",
 ]
+
+[[package]]
+name = "strikes"
+version = "0.1.0"

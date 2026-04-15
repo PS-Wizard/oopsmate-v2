@@ -7,6 +7,14 @@ name = "oopsmate-core"
 version = "0.1.0"
 
 [[package]]
+name = "oopsmate-movegen"
+version = "0.1.0"
+dependencies = [
+ "oopsmate-core",
+ "strikes",
+]
+
+[[package]]
 name = "oopsmate-v2"
 version = "0.1.0"
 dependencies = [

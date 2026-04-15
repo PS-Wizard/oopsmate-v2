@@ -1,0 +1,15 @@
+[package]
+name = "oopsmate-movegen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description.workspace = true
+
+[lib]
+name = "oopsmate_movegen"
+path = "src/lib.rs"
+
+[dependencies]
+oopsmate-core = { path = "../core" }
+strikes = { path = "../strikes" }

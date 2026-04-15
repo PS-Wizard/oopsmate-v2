@@ -18,6 +18,12 @@ pub(crate) fn search_node<E: Evaluator>(
         return Ok(0);
     }
 
+    if depth == 0 {
+        if !in_check(pos) {
+            return Ok(evaluator.evaluate(pos));
+        }
+    }
+
     let mut moves = MoveList::new();
     generate_all(pos, &mut moves);
 

@@ -9,16 +9,17 @@ Created with:
 
 Current project state:
 - path: `~/Projects/oopsmate-v2`
-- crate type: binary crate
+- crate type: Cargo workspace
 - rust edition: `2024`
 - external dependencies: `0`
-- files present:
-  - `Cargo.toml`
-  - `src/main.rs`
+- workspace members:
+  - `crates/core`
+  - `apps/oopsmate`
 
 Current contents:
-- `src/main.rs` is the default hello-world stub
-- `Cargo.toml` is minimal and empty on dependencies
+- `crates/core` contains the foundational board/state/types/move code
+- `apps/oopsmate` is a thin binary crate wired against `core`
+- root `Cargo.toml` owns workspace membership and build profiles
 
 ## Findings from the current oopsmate codebase
 
@@ -245,30 +246,33 @@ That means the API should be shaped for staged consumption, not only for “fill
 
 ## 4. Recommended rewrite architecture for the first milestone
 
-Keep it to one crate first.
-No workspace yet.
-No extra crates yet.
-No abstraction layers yet.
+The current chosen structure is a small workspace:
+- `crates/core`
+- `apps/oopsmate`
 
-Suggested module plan:
+That keeps the board core isolated while avoiding over-splitting too early.
 
-- `src/main.rs`
-- `src/types.rs`
-- `src/board.rs`
-- `src/attacks.rs`
-- `src/movegen.rs`
-- `src/make.rs`
-- `src/fen.rs`
-- `src/perft.rs`
+Suggested early layout:
 
-Optional later split:
-- `src/search.rs`
-- `src/pesto.rs`
-- `src/uci.rs`
+- `crates/core/src/types.rs`
+- `crates/core/src/board.rs`
+- `crates/core/src/hash.rs`
+- `crates/core/src/moves.rs`
+- `crates/core/src/undo.rs`
+- `crates/core/src/position.rs`
+- `crates/core/src/fen.rs`
+- `apps/oopsmate/src/main.rs`
 
-### Why one crate first
-Because the first target is not infrastructure.
-It is correctness + speed of the board core.
+Optional later split once the core is stable:
+- `crates/attacks`
+- `crates/movegen`
+- `crates/search`
+- `crates/nnue`
+- `crates/uci`
+
+### Why this shape
+Because the first target is still correctness + speed of the board core,
+but the workspace boundary keeps the engine binary thin and the core reusable.
 
 ---
 
@@ -378,7 +382,7 @@ Small change, good payoff, should be standard.
 
 Do not add yet:
 - NNUE
-- multiple crates
+- more crates than the current minimal workspace needs
 - compile-time heuristic matrices
 - builder tooling
 - portability layers unless explicitly needed now

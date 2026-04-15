@@ -1,20 +1,14 @@
-[package]
-name = "oopsmate-v2"
+[workspace]
+members = ["crates/core", "apps/oopsmate"]
+resolver = "2"
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "Clean-slate OopsMate rewrite"
 license = "MIT"
 publish = false
 
-[lib]
-name = "oopsmate_v2"
-path = "src/lib.rs"
-
-[[bin]]
-name = "oopsmate-v2"
-path = "src/main.rs"
-
-[dependencies]
+description = "Clean-slate OopsMate rewrite"
 
 [profile.dev]
 opt-level = 1

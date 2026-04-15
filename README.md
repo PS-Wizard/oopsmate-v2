@@ -13,8 +13,8 @@ Current goals:
 
 ## Structure
 
-- `src/lib.rs` — library crate for engine code and unit tests
-- `src/main.rs` — binary entry point
+- `crates/core` — core board/state/types/move foundation
+- `apps/oopsmate` — thin binary crate
 - `roadmap.md` — rewrite findings, bottlenecks, and implementation direction
 
 ## Build
@@ -22,7 +22,7 @@ Current goals:
 ```bash
 cargo build
 cargo test
-cargo run
+cargo run -p oopsmate-v2
 ```
 
 ## Notes

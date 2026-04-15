@@ -13,6 +13,8 @@ pub(crate) fn generate<const STAGE: u8>(pos: &Position, analysis: &Analysis, lis
     generate_queens::<STAGE>(piece_bb(pos, Piece::Queen, analysis.us), analysis, list);
 }
 
+// These are specialized per-piece instead of using a shared function-pointer
+// helper because dispatch in this loop showed up in profiling.
 macro_rules! define_slider_generator {
     ($name:ident, $attack_fn:ident) => {
         #[inline(always)]

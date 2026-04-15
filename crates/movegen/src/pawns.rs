@@ -238,6 +238,9 @@ fn generate_en_passant<const STAGE: u8>(
     list: &mut MoveList,
     pawns: u64,
 ) {
+    // EP is the one pawn move where the captured piece does not sit on the
+    // destination square, so normal pin/check masking is not sufficient by
+    // itself. We must validate the post-EP occupancy explicitly.
     if !include_captures::<STAGE>() {
         return;
     }
@@ -270,6 +273,8 @@ fn generate_en_passant<const STAGE: u8>(
             continue;
         }
 
+        // Remove both pawns from their original squares, then place the moving
+        // pawn on the EP target to test the true resulting occupancy.
         let after_ep = (analysis.occ & !from.bit() & !captured_bit) | ep_target;
         if ep_exposes_check(pos, analysis, after_ep, captured_sq) {
             continue;

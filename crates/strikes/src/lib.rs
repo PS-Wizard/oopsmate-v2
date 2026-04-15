@@ -4,6 +4,8 @@ compile_error!("strikes currently supports x86_64 only");
 #[cfg(not(target_feature = "bmi2"))]
 compile_error!("strikes currently requires BMI2 support for PEXT-based slider lookups");
 
+// The large attack tables are generated at build time so runtime stays tiny and
+// pays no initialization cost.
 include!(concat!(env!("OUT_DIR"), "/tables.rs"));
 
 mod backend;

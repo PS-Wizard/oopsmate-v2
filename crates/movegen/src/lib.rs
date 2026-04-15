@@ -1,3 +1,5 @@
+// This crate generates legal moves directly from precomputed constraints rather
+// than producing a pseudo-legal list and filtering it afterward.
 mod analysis;
 mod attacks;
 mod generate;

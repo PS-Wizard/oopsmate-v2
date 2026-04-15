@@ -4,6 +4,8 @@ use strikes::{bishop_attacks, king_attacks, knight_attacks, pawn_attacks, rook_a
 use crate::attacks::is_square_attacked;
 #[must_use]
 pub fn is_legal(pos: &Position, mv: Move) -> bool {
+    // This is a correctness oracle, not the fast path: clone + make/unmake is
+    // intentionally kept for tests and cross-checking generated moves.
     if !is_pseudo_legal(pos, mv) {
         return false;
     }
@@ -136,6 +138,8 @@ fn is_pseudo_legal_slider(
     is_capture: bool,
     attacks_from: fn(usize, u64) -> u64,
 ) -> bool {
+    // Fine here because this helper is test/oracle oriented; the actual movegen
+    // hot path uses specialized per-piece generators instead.
     if mv.kind().is_promotion()
         || matches!(
             mv.kind(),

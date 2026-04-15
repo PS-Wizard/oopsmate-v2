@@ -1,5 +1,7 @@
 use crate::types::{EMPTY_SQUARE, Square};
 
+// Deterministic pseudo-random keys keep hashes stable across builds while still
+// giving us zobrist-style distribution.
 const fn splitmix64_next(seed: &mut u64) -> u64 {
     *seed = seed.wrapping_add(0x9e37_79b9_7f4a_7c15);
     let mut z = *seed;

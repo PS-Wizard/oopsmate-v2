@@ -111,6 +111,8 @@ impl Position {
 
     #[must_use]
     pub fn compute_hash(&self) -> u64 {
+        // This is intentionally the slow full recomputation path used for setup
+        // and validation. Normal move making keeps the hash incrementally.
         let mut hash = 0u64;
 
         for raw in 0u8..64 {
@@ -134,6 +136,8 @@ impl Position {
 
     #[must_use]
     pub fn is_repetition(&self) -> bool {
+        // Only positions with the same side to move can repeat, so we walk the
+        // repetition history in steps of two plies instead of scanning every hash.
         if self.rule50 < 4 {
             return false;
         }
@@ -178,6 +182,8 @@ impl Position {
             _ => EMPTY_SQUARE,
         };
 
+        // Snapshot only the reversible state; board mutations themselves are
+        // reconstructed from the move kind during unmake.
         self.undo_stack.push(Undo {
             moved,
             captured,
@@ -220,6 +226,8 @@ impl Position {
                 self.hash ^= piece_key(moved, to);
             }
             MoveKind::EnPassant => {
+                // The captured pawn is not on the destination square, so EP must
+                // remove it from the adjacent file before moving the pawn.
                 let capture_square = if moved_color == Color::White {
                     Square::from_raw(to.raw() - 8)
                 } else {
@@ -232,6 +240,8 @@ impl Position {
                 self.hash ^= piece_key(moved, to);
             }
             MoveKind::Castle => {
+                // Castling is encoded as a king move; rook relocation is derived
+                // from the king destination to keep Move compact.
                 self.hash ^= piece_key(moved, from);
                 self.board.move_piece(from, to);
                 self.hash ^= piece_key(moved, to);
@@ -295,6 +305,8 @@ impl Position {
 
     #[inline(always)]
     pub fn unmake_move(&mut self, mv: Move) {
+        // Unmake restores the exact pre-move reversible state from Undo, while
+        // board piece placement is reversed from the original move encoding.
         let undo = self.undo_stack.pop();
         let _ = self.repetition.pop();
         self.ply -= 1;

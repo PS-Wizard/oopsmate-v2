@@ -3,6 +3,8 @@ use crate::backend::pext::slider_index;
 #[inline(always)]
 #[must_use]
 pub fn rook_attacks(square: usize, occupied: u64) -> u64 {
+    // PEXT compresses just the relevant blocker bits into a dense table index,
+    // which is why the generated tables are flat + offset-based instead of nested.
     let index = slider_index(occupied, crate::ROOK_MASKS[square]);
     crate::ROOK_ATTACKS[crate::ROOK_OFFSETS[square] as usize + index]
 }

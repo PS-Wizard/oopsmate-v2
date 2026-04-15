@@ -7,6 +7,9 @@ use crate::util::{color_bb, piece_bb, pop_lsb};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Analysis {
+    // One per-node summary of the legality constraints consumed by every piece
+    // generator. Computing this once is cheaper than rediscovering pins/checks
+    // in each generator separately.
     pub us: Color,
     pub them: Color,
     pub king_sq: Square,
@@ -61,6 +64,9 @@ pub fn analyze(pos: &Position) -> Analysis {
     let mut pinned = 0u64;
     let mut checkers = 0u64;
 
+    // Empty-board rays from the king tell us which enemy sliders are even
+    // geometrically capable of checking or pinning; real occupancy is applied
+    // only when we inspect the blockers on that ray.
     let mut potential = (bishop_attacks(king_sq.index(), 0) & enemy_bishops_queens)
         | (rook_attacks(king_sq.index(), 0) & enemy_rooks_queens);
 
@@ -79,6 +85,8 @@ pub fn analyze(pos: &Position) -> Analysis {
     checkers |= knight_attacks(king_sq.index()) & piece_bb(pos, Piece::Knight, them);
     checkers |= pawn_attacks(us.index(), king_sq.index()) & piece_bb(pos, Piece::Pawn, them);
 
+    // Under single check, non-king moves may only capture the checker or block
+    // its ray. Under double check, only king moves survive, so this becomes 0.
     let check_mask = if checkers == 0 {
         !0u64
     } else if checkers.count_ones() == 1 {

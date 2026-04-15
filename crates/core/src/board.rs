@@ -4,6 +4,8 @@ use crate::types::{
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Board {
+    // Keep mailbox and bitboards in one place so make/unmake can update every
+    // view in a single tight mutation path without reconstruction.
     pieces: [Bitboard; 6],
     colors: [Bitboard; 2],
     occupied: Bitboard,
@@ -118,6 +120,8 @@ impl Board {
 
     #[inline(always)]
     pub fn move_piece(&mut self, from: Square, to: Square) -> u8 {
+        // For a non-capturing move we can toggle source and destination bits with
+        // one xor mask instead of clearing then setting separately.
         debug_assert!(from.is_valid());
         debug_assert!(to.is_valid());
 

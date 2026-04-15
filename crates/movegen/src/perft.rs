@@ -111,6 +111,8 @@ pub const PERFT_CASES: &[PerftCase] = &[
 
 #[must_use]
 pub fn perft(position: &mut Position, depth: u32) -> u64 {
+    // Perft is kept inside movegen so tests, debugging tools, and throughput
+    // benchmarks all share the exact same legal-generation surface.
     if depth == 0 {
         return 1;
     }

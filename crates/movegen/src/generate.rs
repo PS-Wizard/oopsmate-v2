@@ -40,6 +40,8 @@ pub(crate) fn generate_with_analysis<const STAGE: u8>(
     analysis: &Analysis,
     list: &mut MoveList,
 ) {
+    // King moves come first because in double check they are the only legal
+    // escape, so the rest of generation can bail out immediately.
     list.clear();
 
     if is_evasions::<STAGE>() && !analysis.in_check() {

@@ -17,6 +17,9 @@ pub fn is_square_attacked_with_occ(
     by: Color,
     occupied: u64,
 ) -> bool {
+    // The explicit occupancy override is used by king move generation and EP
+    // validation, where legality depends on a position that does not yet exist
+    // as a full Position value.
     let sq = square.index();
 
     if knight_attacks(sq) & piece_bb(pos, Piece::Knight, by) != 0 {

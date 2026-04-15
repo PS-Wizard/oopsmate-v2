@@ -31,6 +31,8 @@ pub(crate) fn generate<const STAGE: u8>(pos: &Position, analysis: &Analysis, lis
             continue;
         }
 
+        // Re-test attacks with the king on its destination square because king
+        // moves cannot rely on the precomputed node-wide constraints.
         let occ_after = (analysis.occ & !from_bit & !to.bit()) | to.bit();
         if !is_square_attacked_with_occ(pos, to, analysis.them, occ_after) {
             let kind = if is_capture {
@@ -49,6 +51,9 @@ pub(crate) fn generate<const STAGE: u8>(pos: &Position, analysis: &Analysis, lis
 
 #[inline(always)]
 fn generate_castling(pos: &Position, analysis: &Analysis, list: &mut MoveList) {
+    // Castling is generated only from the quiet stages. Rights alone are not
+    // enough here; we also verify rook presence so corrupted rights never leak
+    // a bogus castle move into perft/search.
     let occupied = analysis.occ;
 
     match analysis.us {

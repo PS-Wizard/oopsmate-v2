@@ -6,6 +6,8 @@ pub const MAX_MOVES: usize = 256;
 
 #[derive(Clone, Debug)]
 pub struct MoveList {
+    // Deliberately uninitialized: zeroing a full move buffer at every node was a
+    // measurable regression in the hot path.
     moves: [MaybeUninit<Move>; MAX_MOVES],
     len: usize,
 }
@@ -49,6 +51,8 @@ impl MoveList {
     #[inline(always)]
     #[must_use]
     pub fn as_slice(&self) -> &[Move] {
+        // Safety: only the prefix [0..len) is ever exposed, and push() is the
+        // only writer that advances len after initializing the slot.
         unsafe { std::slice::from_raw_parts(self.moves.as_ptr() as *const Move, self.len) }
     }
 

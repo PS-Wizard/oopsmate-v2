@@ -58,8 +58,14 @@ pub(crate) const fn piece_key(piece_code: u8, square: Square) -> u64 {
     if piece_code == EMPTY_SQUARE {
         0
     } else {
-        PIECE_KEYS[(piece_code - 1) as usize][square.index()]
+        piece_key_nonempty(piece_code, square)
     }
+}
+
+#[inline(always)]
+#[must_use]
+pub(crate) const fn piece_key_nonempty(piece_code: u8, square: Square) -> u64 {
+    PIECE_KEYS[(piece_code - 1) as usize][square.index()]
 }
 
 #[inline(always)]

@@ -44,14 +44,14 @@ impl UndoStack {
 
     #[inline(always)]
     pub(crate) fn push(&mut self, undo: Undo) {
-        assert!(self.len < MAX_POSITION_HISTORY, "undo stack overflow");
+        debug_assert!(self.len < MAX_POSITION_HISTORY, "undo stack overflow");
         self.entries[self.len] = undo;
         self.len += 1;
     }
 
     #[inline(always)]
     pub(crate) fn pop(&mut self) -> Undo {
-        assert!(self.len != 0, "undo stack underflow");
+        debug_assert!(self.len != 0, "undo stack underflow");
         self.len -= 1;
         self.entries[self.len]
     }
@@ -85,14 +85,14 @@ impl RepetitionStack {
 
     #[inline(always)]
     pub(crate) fn push(&mut self, hash: u64) {
-        assert!(self.len < MAX_POSITION_HISTORY, "repetition stack overflow");
+        debug_assert!(self.len < MAX_POSITION_HISTORY, "repetition stack overflow");
         self.hashes[self.len] = hash;
         self.len += 1;
     }
 
     #[inline(always)]
     pub(crate) fn pop(&mut self) -> u64 {
-        assert!(self.len != 0, "repetition stack underflow");
+        debug_assert!(self.len != 0, "repetition stack underflow");
         self.len -= 1;
         self.hashes[self.len]
     }

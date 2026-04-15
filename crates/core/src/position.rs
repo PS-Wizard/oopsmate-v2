@@ -1,5 +1,5 @@
 use crate::board::Board;
-use crate::hash::{SIDE_KEY, castling_key, ep_key, piece_key};
+use crate::hash::{SIDE_KEY, castling_key, ep_key, piece_key, piece_key_nonempty};
 use crate::moves::{Move, MoveKind};
 use crate::types::{
     CastlingRights, Color, EMPTY_SQUARE, Piece, Square, color_from_code, encode_piece,
@@ -161,6 +161,23 @@ impl Position {
     }
 
     #[inline(always)]
+    fn updated_castling_rights(
+        castling: CastlingRights,
+        moved_piece: Piece,
+        moved_color: Color,
+        from: Square,
+        to: Square,
+    ) -> CastlingRights {
+        let mut updated = castling;
+        if moved_piece == Piece::King {
+            updated.remove_color(moved_color);
+        }
+        updated.remove_rook_square(from);
+        updated.remove_rook_square(to);
+        updated
+    }
+
+    #[inline(always)]
     pub fn make_move(&mut self, mv: Move) {
         let from = mv.from();
         let to = mv.to();
@@ -194,7 +211,7 @@ impl Position {
             hash: self.hash,
         });
 
-        self.hash ^= castling_key(self.castling.0);
+        let old_castling = self.castling;
         if !self.ep_square.is_none() {
             self.hash ^= ep_key(self.ep_square);
         }
@@ -208,22 +225,22 @@ impl Position {
 
         match kind {
             MoveKind::Quiet => {
-                self.hash ^= piece_key(moved, from);
+                self.hash ^= piece_key_nonempty(moved, from);
                 self.board.move_piece(from, to);
-                self.hash ^= piece_key(moved, to);
+                self.hash ^= piece_key_nonempty(moved, to);
             }
             MoveKind::DoublePush => {
-                self.hash ^= piece_key(moved, from);
+                self.hash ^= piece_key_nonempty(moved, from);
                 self.board.move_piece(from, to);
-                self.hash ^= piece_key(moved, to);
+                self.hash ^= piece_key_nonempty(moved, to);
                 self.ep_square = Square::from_raw((from.raw() + to.raw()) / 2);
             }
             MoveKind::Capture => {
                 let removed = self.board.remove_piece(to);
-                self.hash ^= piece_key(removed, to);
-                self.hash ^= piece_key(moved, from);
+                self.hash ^= piece_key_nonempty(removed, to);
+                self.hash ^= piece_key_nonempty(moved, from);
                 self.board.move_piece(from, to);
-                self.hash ^= piece_key(moved, to);
+                self.hash ^= piece_key_nonempty(moved, to);
             }
             MoveKind::EnPassant => {
                 // The captured pawn is not on the destination square, so EP must
@@ -234,17 +251,17 @@ impl Position {
                     Square::from_raw(to.raw() + 8)
                 };
                 let removed = self.board.remove_piece(capture_square);
-                self.hash ^= piece_key(removed, capture_square);
-                self.hash ^= piece_key(moved, from);
+                self.hash ^= piece_key_nonempty(removed, capture_square);
+                self.hash ^= piece_key_nonempty(moved, from);
                 self.board.move_piece(from, to);
-                self.hash ^= piece_key(moved, to);
+                self.hash ^= piece_key_nonempty(moved, to);
             }
             MoveKind::Castle => {
                 // Castling is encoded as a king move; rook relocation is derived
                 // from the king destination to keep Move compact.
-                self.hash ^= piece_key(moved, from);
+                self.hash ^= piece_key_nonempty(moved, from);
                 self.board.move_piece(from, to);
-                self.hash ^= piece_key(moved, to);
+                self.hash ^= piece_key_nonempty(moved, to);
 
                 let (rook_from, rook_to) = match to.raw() {
                     6 => (Square::from_raw(7), Square::from_raw(5)),
@@ -254,41 +271,41 @@ impl Position {
                     _ => panic!("invalid castle move"),
                 };
                 let rook = encode_piece(Piece::Rook, moved_color);
-                self.hash ^= piece_key(rook, rook_from);
+                self.hash ^= piece_key_nonempty(rook, rook_from);
                 self.board.move_piece(rook_from, rook_to);
-                self.hash ^= piece_key(rook, rook_to);
+                self.hash ^= piece_key_nonempty(rook, rook_to);
             }
             MoveKind::PromotionKnight
             | MoveKind::PromotionBishop
             | MoveKind::PromotionRook
             | MoveKind::PromotionQueen => {
-                self.hash ^= piece_key(moved, from);
+                self.hash ^= piece_key_nonempty(moved, from);
                 self.board.remove_piece(from);
                 let promoted = encode_piece(kind.promotion_piece().unwrap(), moved_color);
                 self.board.add_piece(to, promoted);
-                self.hash ^= piece_key(promoted, to);
+                self.hash ^= piece_key_nonempty(promoted, to);
             }
             MoveKind::CapturePromotionKnight
             | MoveKind::CapturePromotionBishop
             | MoveKind::CapturePromotionRook
             | MoveKind::CapturePromotionQueen => {
                 let removed = self.board.remove_piece(to);
-                self.hash ^= piece_key(removed, to);
-                self.hash ^= piece_key(moved, from);
+                self.hash ^= piece_key_nonempty(removed, to);
+                self.hash ^= piece_key_nonempty(moved, from);
                 self.board.remove_piece(from);
                 let promoted = encode_piece(kind.promotion_piece().unwrap(), moved_color);
                 self.board.add_piece(to, promoted);
-                self.hash ^= piece_key(promoted, to);
+                self.hash ^= piece_key_nonempty(promoted, to);
             }
         }
 
-        if moved_piece == Piece::King {
-            self.castling.remove_color(moved_color);
+        let new_castling =
+            Self::updated_castling_rights(old_castling, moved_piece, moved_color, from, to);
+        if new_castling != old_castling {
+            self.hash ^= castling_key(old_castling.0);
+            self.castling = new_castling;
+            self.hash ^= castling_key(new_castling.0);
         }
-        self.castling.remove_rook_square(from);
-        self.castling.remove_rook_square(to);
-
-        self.hash ^= castling_key(self.castling.0);
         if !self.ep_square.is_none() {
             self.hash ^= ep_key(self.ep_square);
         }

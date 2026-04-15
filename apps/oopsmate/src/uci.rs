@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use oopsmate_core::{Move, Piece, Position};
-use oopsmate_eval::MaterialEval;
+use oopsmate_eval::PestoEval;
 use oopsmate_movegen::{MoveList, generate_all};
 use oopsmate_search::{ClockLimits, SearchLimits, SearchResult, mate_in, search_with_reporter};
 
@@ -73,7 +73,7 @@ fn spawn_search(position: Position, limits: SearchLimits) -> SearchWorker {
                 &position,
                 limits,
                 worker_stop.as_ref(),
-                &MaterialEval,
+                &PestoEval,
                 print_search_info,
             );
             print_search_result(result);

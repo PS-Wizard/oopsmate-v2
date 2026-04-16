@@ -240,6 +240,44 @@ impl CastlingRights {
     }
 }
 
+const PIECE_FROM_CODE: [Piece; 13] = [
+    Piece::Pawn,
+    Piece::Pawn,
+    Piece::Knight,
+    Piece::Bishop,
+    Piece::Rook,
+    Piece::Queen,
+    Piece::King,
+    Piece::Pawn,
+    Piece::Knight,
+    Piece::Bishop,
+    Piece::Rook,
+    Piece::Queen,
+    Piece::King,
+];
+
+const COLOR_FROM_CODE: [Color; 13] = [
+    Color::White,
+    Color::White,
+    Color::White,
+    Color::White,
+    Color::White,
+    Color::White,
+    Color::White,
+    Color::Black,
+    Color::Black,
+    Color::Black,
+    Color::Black,
+    Color::Black,
+    Color::Black,
+];
+
+const PIECE_INDEX_FROM_CODE: [usize; 13] = [0, 0, 1, 2, 3, 4, 5, 0, 1, 2, 3, 4, 5];
+const COLOR_INDEX_FROM_CODE: [usize; 13] = [0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1];
+const IS_KING_CODE: [bool; 13] = [
+    false, false, false, false, false, false, true, false, false, false, false, false, true,
+];
+
 #[inline(always)]
 #[must_use]
 pub const fn encode_piece(piece: Piece, color: Color) -> u8 {
@@ -249,25 +287,31 @@ pub const fn encode_piece(piece: Piece, color: Color) -> u8 {
 #[inline(always)]
 #[must_use]
 pub const fn piece_from_code(code: u8) -> Piece {
-    match (code - 1) % 6 {
-        0 => Piece::Pawn,
-        1 => Piece::Knight,
-        2 => Piece::Bishop,
-        3 => Piece::Rook,
-        4 => Piece::Queen,
-        5 => Piece::King,
-        _ => unreachable!(),
-    }
+    PIECE_FROM_CODE[code as usize]
+}
+
+#[inline(always)]
+#[must_use]
+pub const fn piece_index_from_code(code: u8) -> usize {
+    PIECE_INDEX_FROM_CODE[code as usize]
 }
 
 #[inline(always)]
 #[must_use]
 pub const fn color_from_code(code: u8) -> Color {
-    if code <= 6 {
-        Color::White
-    } else {
-        Color::Black
-    }
+    COLOR_FROM_CODE[code as usize]
+}
+
+#[inline(always)]
+#[must_use]
+pub const fn color_index_from_code(code: u8) -> usize {
+    COLOR_INDEX_FROM_CODE[code as usize]
+}
+
+#[inline(always)]
+#[must_use]
+pub const fn is_king_code(code: u8) -> bool {
+    IS_KING_CODE[code as usize]
 }
 
 #[inline(always)]

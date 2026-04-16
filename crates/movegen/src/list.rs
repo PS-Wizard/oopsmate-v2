@@ -29,7 +29,7 @@ impl MoveList {
 
     #[inline(always)]
     pub fn push(&mut self, mv: Move) {
-        debug_assert!((self.len as usize) < MAX_MOVES);
+        debug_assert!(self.len < MAX_MOVES);
         unsafe {
             self.moves.get_unchecked_mut(self.len).write(mv);
         }

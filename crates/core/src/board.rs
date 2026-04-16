@@ -1,5 +1,6 @@
 use crate::types::{
-    Bitboard, Color, EMPTY_SQUARE, Piece, Square, color_from_code, decode_piece, piece_from_code,
+    Bitboard, Color, EMPTY_SQUARE, Piece, Square, color_index_from_code, decode_piece,
+    is_king_code, piece_index_from_code,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -75,21 +76,37 @@ impl Board {
 
     #[inline(always)]
     pub fn add_piece(&mut self, square: Square, piece_code: u8) {
+        self.add_piece_known(
+            square,
+            piece_code,
+            piece_index_from_code(piece_code),
+            color_index_from_code(piece_code),
+            is_king_code(piece_code),
+        );
+    }
+
+    #[inline(always)]
+    pub(crate) fn add_piece_known(
+        &mut self,
+        square: Square,
+        piece_code: u8,
+        piece_index: usize,
+        color_index: usize,
+        is_king: bool,
+    ) {
         debug_assert!(square.is_valid());
         debug_assert_eq!(self.squares[square.index()], EMPTY_SQUARE);
         debug_assert_ne!(piece_code, EMPTY_SQUARE);
 
-        let piece = piece_from_code(piece_code);
-        let color = color_from_code(piece_code);
         let bit = square.bit();
 
-        self.pieces[piece.index()] |= bit;
-        self.colors[color.index()] |= bit;
+        self.pieces[piece_index] |= bit;
+        self.colors[color_index] |= bit;
         self.occupied |= bit;
         self.squares[square.index()] = piece_code;
 
-        if piece == Piece::King {
-            self.king_sq[color.index()] = square;
+        if is_king {
+            self.king_sq[color_index] = square;
         }
     }
 
@@ -102,50 +119,85 @@ impl Board {
             return EMPTY_SQUARE;
         }
 
-        let piece = piece_from_code(piece_code);
-        let color = color_from_code(piece_code);
-        let bit = square.bit();
-
-        self.pieces[piece.index()] &= !bit;
-        self.colors[color.index()] &= !bit;
-        self.occupied &= !bit;
-        self.squares[square.index()] = EMPTY_SQUARE;
-
-        if piece == Piece::King {
-            self.king_sq[color.index()] = Square::NONE;
-        }
-
+        self.remove_piece_known(
+            square,
+            piece_code,
+            piece_index_from_code(piece_code),
+            color_index_from_code(piece_code),
+            is_king_code(piece_code),
+        );
         piece_code
     }
 
     #[inline(always)]
-    pub fn move_piece(&mut self, from: Square, to: Square) -> u8 {
+    pub(crate) fn remove_piece_known(
+        &mut self,
+        square: Square,
+        piece_code: u8,
+        piece_index: usize,
+        color_index: usize,
+        is_king: bool,
+    ) {
+        debug_assert!(square.is_valid());
+        debug_assert_eq!(self.squares[square.index()], piece_code);
+        debug_assert_ne!(piece_code, EMPTY_SQUARE);
+
+        let bit = square.bit();
+
+        self.pieces[piece_index] &= !bit;
+        self.colors[color_index] &= !bit;
+        self.occupied &= !bit;
+        self.squares[square.index()] = EMPTY_SQUARE;
+
+        if is_king {
+            self.king_sq[color_index] = Square::NONE;
+        }
+    }
+
+    #[inline(always)]
+    pub fn move_piece(&mut self, from: Square, to: Square) {
+        let piece_code = self.squares[from.index()];
+        self.move_piece_known(
+            from,
+            to,
+            piece_code,
+            piece_index_from_code(piece_code),
+            color_index_from_code(piece_code),
+            is_king_code(piece_code),
+        );
+    }
+
+    #[inline(always)]
+    pub(crate) fn move_piece_known(
+        &mut self,
+        from: Square,
+        to: Square,
+        piece_code: u8,
+        piece_index: usize,
+        color_index: usize,
+        is_king: bool,
+    ) {
         // For a non-capturing move we can toggle source and destination bits with
         // one xor mask instead of clearing then setting separately.
         debug_assert!(from.is_valid());
         debug_assert!(to.is_valid());
-
-        let piece_code = self.squares[from.index()];
         debug_assert_ne!(piece_code, EMPTY_SQUARE);
+        debug_assert_eq!(self.squares[from.index()], piece_code);
         debug_assert_eq!(self.squares[to.index()], EMPTY_SQUARE);
 
-        let piece = piece_from_code(piece_code);
-        let color = color_from_code(piece_code);
         let from_bit = from.bit();
         let to_bit = to.bit();
         let from_to_mask = from_bit | to_bit;
 
-        self.pieces[piece.index()] ^= from_to_mask;
-        self.colors[color.index()] ^= from_to_mask;
+        self.pieces[piece_index] ^= from_to_mask;
+        self.colors[color_index] ^= from_to_mask;
         self.occupied ^= from_to_mask;
         self.squares[from.index()] = EMPTY_SQUARE;
         self.squares[to.index()] = piece_code;
 
-        if piece == Piece::King {
-            self.king_sq[color.index()] = to;
+        if is_king {
+            self.king_sq[color_index] = to;
         }
-
-        piece_code
     }
 }
 

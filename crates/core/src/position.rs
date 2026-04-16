@@ -2,8 +2,8 @@ use crate::board::Board;
 use crate::hash::{SIDE_KEY, castling_key, ep_key, piece_key, piece_key_nonempty};
 use crate::moves::{Move, MoveKind};
 use crate::types::{
-    CastlingRights, Color, EMPTY_SQUARE, Piece, Square, color_from_code, encode_piece,
-    piece_from_code,
+    CastlingRights, Color, EMPTY_SQUARE, Piece, Square, color_from_code, color_index_from_code,
+    encode_piece, is_king_code, piece_from_code, piece_index_from_code,
 };
 use crate::undo::{RepetitionStack, Undo, UndoStack};
 
@@ -170,6 +170,9 @@ impl Position {
 
         let moved_piece = piece_from_code(moved);
         let moved_color = color_from_code(moved);
+        let moved_piece_index = moved_piece.index();
+        let moved_color_index = moved_color.index();
+        let moved_is_king = moved_piece == Piece::King;
         debug_assert_eq!(moved_color, self.side_to_move);
 
         let captured = match kind {
@@ -209,12 +212,26 @@ impl Position {
         match kind {
             MoveKind::Quiet => {
                 self.hash ^= piece_key_nonempty(moved, from);
-                self.board.move_piece(from, to);
+                self.board.move_piece_known(
+                    from,
+                    to,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
                 self.hash ^= piece_key_nonempty(moved, to);
             }
             MoveKind::DoublePush => {
                 self.hash ^= piece_key_nonempty(moved, from);
-                self.board.move_piece(from, to);
+                self.board.move_piece_known(
+                    from,
+                    to,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
                 self.hash ^= piece_key_nonempty(moved, to);
                 self.ep_square = Square::from_raw((from.raw() + to.raw()) / 2);
             }
@@ -222,7 +239,14 @@ impl Position {
                 let removed = self.board.remove_piece(to);
                 self.hash ^= piece_key_nonempty(removed, to);
                 self.hash ^= piece_key_nonempty(moved, from);
-                self.board.move_piece(from, to);
+                self.board.move_piece_known(
+                    from,
+                    to,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
                 self.hash ^= piece_key_nonempty(moved, to);
             }
             MoveKind::EnPassant => {
@@ -236,14 +260,28 @@ impl Position {
                 let removed = self.board.remove_piece(capture_square);
                 self.hash ^= piece_key_nonempty(removed, capture_square);
                 self.hash ^= piece_key_nonempty(moved, from);
-                self.board.move_piece(from, to);
+                self.board.move_piece_known(
+                    from,
+                    to,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
                 self.hash ^= piece_key_nonempty(moved, to);
             }
             MoveKind::Castle => {
                 // Castling is encoded as a king move; rook relocation is derived
                 // from the king destination to keep Move compact.
                 self.hash ^= piece_key_nonempty(moved, from);
-                self.board.move_piece(from, to);
+                self.board.move_piece_known(
+                    from,
+                    to,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
                 self.hash ^= piece_key_nonempty(moved, to);
 
                 let (rook_from, rook_to) = match to.raw() {
@@ -255,7 +293,14 @@ impl Position {
                 };
                 let rook = encode_piece(Piece::Rook, moved_color);
                 self.hash ^= piece_key_nonempty(rook, rook_from);
-                self.board.move_piece(rook_from, rook_to);
+                self.board.move_piece_known(
+                    rook_from,
+                    rook_to,
+                    rook,
+                    Piece::Rook.index(),
+                    moved_color_index,
+                    false,
+                );
                 self.hash ^= piece_key_nonempty(rook, rook_to);
             }
             MoveKind::PromotionKnight
@@ -263,9 +308,22 @@ impl Position {
             | MoveKind::PromotionRook
             | MoveKind::PromotionQueen => {
                 self.hash ^= piece_key_nonempty(moved, from);
-                self.board.remove_piece(from);
-                let promoted = encode_piece(kind.promotion_piece().unwrap(), moved_color);
-                self.board.add_piece(to, promoted);
+                self.board.remove_piece_known(
+                    from,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
+                let promoted_piece = kind.promotion_piece().unwrap();
+                let promoted = encode_piece(promoted_piece, moved_color);
+                self.board.add_piece_known(
+                    to,
+                    promoted,
+                    promoted_piece.index(),
+                    moved_color_index,
+                    false,
+                );
                 self.hash ^= piece_key_nonempty(promoted, to);
             }
             MoveKind::CapturePromotionKnight
@@ -275,9 +333,22 @@ impl Position {
                 let removed = self.board.remove_piece(to);
                 self.hash ^= piece_key_nonempty(removed, to);
                 self.hash ^= piece_key_nonempty(moved, from);
-                self.board.remove_piece(from);
-                let promoted = encode_piece(kind.promotion_piece().unwrap(), moved_color);
-                self.board.add_piece(to, promoted);
+                self.board.remove_piece_known(
+                    from,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
+                let promoted_piece = kind.promotion_piece().unwrap();
+                let promoted = encode_piece(promoted_piece, moved_color);
+                self.board.add_piece_known(
+                    to,
+                    promoted,
+                    promoted_piece.index(),
+                    moved_color_index,
+                    false,
+                );
                 self.hash ^= piece_key_nonempty(promoted, to);
             }
         }
@@ -314,26 +385,72 @@ impl Position {
         let from = mv.from();
         let to = mv.to();
         let kind = mv.kind();
+        let moved = undo.moved;
+        let moved_piece = piece_from_code(moved);
+        let moved_color = color_from_code(moved);
+        let moved_piece_index = moved_piece.index();
+        let moved_color_index = moved_color.index();
+        let moved_is_king = moved_piece == Piece::King;
 
         match kind {
             MoveKind::Quiet | MoveKind::DoublePush => {
-                self.board.move_piece(to, from);
+                self.board.move_piece_known(
+                    to,
+                    from,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
             }
             MoveKind::Capture => {
-                self.board.move_piece(to, from);
-                self.board.add_piece(to, undo.captured);
+                self.board.move_piece_known(
+                    to,
+                    from,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
+                self.board.add_piece_known(
+                    to,
+                    undo.captured,
+                    piece_index_from_code(undo.captured),
+                    color_index_from_code(undo.captured),
+                    is_king_code(undo.captured),
+                );
             }
             MoveKind::EnPassant => {
-                self.board.move_piece(to, from);
+                self.board.move_piece_known(
+                    to,
+                    from,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
                 let capture_square = if self.side_to_move == Color::White {
                     Square::from_raw(to.raw() - 8)
                 } else {
                     Square::from_raw(to.raw() + 8)
                 };
-                self.board.add_piece(capture_square, undo.captured);
+                self.board.add_piece_known(
+                    capture_square,
+                    undo.captured,
+                    piece_index_from_code(undo.captured),
+                    color_index_from_code(undo.captured),
+                    is_king_code(undo.captured),
+                );
             }
             MoveKind::Castle => {
-                self.board.move_piece(to, from);
+                self.board.move_piece_known(
+                    to,
+                    from,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
                 let (rook_from, rook_to) = match to.raw() {
                     6 => (Square::from_raw(7), Square::from_raw(5)),
                     2 => (Square::from_raw(0), Square::from_raw(3)),
@@ -341,22 +458,64 @@ impl Position {
                     58 => (Square::from_raw(56), Square::from_raw(59)),
                     _ => panic!("invalid castle move"),
                 };
-                self.board.move_piece(rook_to, rook_from);
+                let rook = encode_piece(Piece::Rook, moved_color);
+                self.board.move_piece_known(
+                    rook_to,
+                    rook_from,
+                    rook,
+                    Piece::Rook.index(),
+                    moved_color_index,
+                    false,
+                );
             }
             MoveKind::PromotionKnight
             | MoveKind::PromotionBishop
             | MoveKind::PromotionRook
             | MoveKind::PromotionQueen => {
-                self.board.remove_piece(to);
-                self.board.add_piece(from, undo.moved);
+                let promoted_piece = kind.promotion_piece().unwrap();
+                let promoted = encode_piece(promoted_piece, moved_color);
+                self.board.remove_piece_known(
+                    to,
+                    promoted,
+                    promoted_piece.index(),
+                    moved_color_index,
+                    false,
+                );
+                self.board.add_piece_known(
+                    from,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
             }
             MoveKind::CapturePromotionKnight
             | MoveKind::CapturePromotionBishop
             | MoveKind::CapturePromotionRook
             | MoveKind::CapturePromotionQueen => {
-                self.board.remove_piece(to);
-                self.board.add_piece(from, undo.moved);
-                self.board.add_piece(to, undo.captured);
+                let promoted_piece = kind.promotion_piece().unwrap();
+                let promoted = encode_piece(promoted_piece, moved_color);
+                self.board.remove_piece_known(
+                    to,
+                    promoted,
+                    promoted_piece.index(),
+                    moved_color_index,
+                    false,
+                );
+                self.board.add_piece_known(
+                    from,
+                    moved,
+                    moved_piece_index,
+                    moved_color_index,
+                    moved_is_king,
+                );
+                self.board.add_piece_known(
+                    to,
+                    undo.captured,
+                    piece_index_from_code(undo.captured),
+                    color_index_from_code(undo.captured),
+                    is_king_code(undo.captured),
+                );
             }
         }
 

@@ -6,9 +6,10 @@ pub const MAX_MOVES: usize = 256;
 
 #[derive(Clone, Debug)]
 pub struct MoveList {
-    // Deliberately uninitialized: zeroing a full move buffer at every node was a
-    // measurable regression in the hot path.
-    moves: [MaybeUninit<Move>; MAX_MOVES],
+    // Deliberately left fully uninitialized: only the prefix [0..len) is ever
+    // written and exposed, so constructing a fresh list should not clear the
+    // whole backing array.
+    moves: MaybeUninit<[Move; MAX_MOVES]>,
     len: usize,
 }
 
@@ -17,7 +18,7 @@ impl MoveList {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            moves: [MaybeUninit::uninit(); MAX_MOVES],
+            moves: MaybeUninit::uninit(),
             len: 0,
         }
     }
@@ -30,8 +31,12 @@ impl MoveList {
     #[inline(always)]
     pub fn push(&mut self, mv: Move) {
         debug_assert!(self.len < MAX_MOVES);
+        // SAFETY: the backing array is valid storage for MAX_MOVES elements;
+        // push writes exactly one slot before len is incremented.
         unsafe {
-            self.moves.get_unchecked_mut(self.len).write(mv);
+            (self.moves.as_mut_ptr() as *mut Move)
+                .add(self.len)
+                .write(mv);
         }
         self.len += 1;
     }
@@ -51,8 +56,8 @@ impl MoveList {
     #[inline(always)]
     #[must_use]
     pub fn as_slice(&self) -> &[Move] {
-        // Safety: only the prefix [0..len) is ever exposed, and push() is the
-        // only writer that advances len after initializing the slot.
+        // SAFETY: only the prefix [0..len) is ever exposed, and push() is the
+        // only writer that advances len after initializing that slot.
         unsafe { std::slice::from_raw_parts(self.moves.as_ptr() as *const Move, self.len) }
     }
 

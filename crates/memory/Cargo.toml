@@ -11,3 +11,4 @@ name = "oopsmate_memory"
 path = "src/lib.rs"
 
 [dependencies]
+oopsmate-core = { path = "../core" }

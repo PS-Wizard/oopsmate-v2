@@ -1,2 +1,25 @@
-//! Search memory lives here: transposition tables, history, killers, and the
-//! rest of the remembered state that search policy reads but does not own.
+mod tt;
+
+pub use tt::{Bound, MATE_SCORE, TranspositionTable, TtHit, is_mate_score, mate_in, mate_score};
+
+#[derive(Debug)]
+pub struct SearchMemory {
+    pub tt: TranspositionTable,
+}
+
+impl SearchMemory {
+    #[must_use]
+    pub fn new(tt_mebibytes: usize) -> Self {
+        Self {
+            tt: TranspositionTable::new(tt_mebibytes),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.tt.clear();
+    }
+
+    pub fn new_search(&mut self) {
+        self.tt.new_search();
+    }
+}

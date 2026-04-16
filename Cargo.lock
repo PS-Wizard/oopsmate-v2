@@ -16,6 +16,9 @@ dependencies = [
 [[package]]
 name = "oopsmate-memory"
 version = "0.1.0"
+dependencies = [
+ "oopsmate-core",
+]
 
 [[package]]
 name = "oopsmate-movegen"

@@ -244,6 +244,58 @@ That means the API should be shaped for staged consumption, not only for “fill
 
 ---
 
+## Search tuning constants and tuning surface
+
+Later on, the engine will need a single place for search/pruning/time-management constants so they can be tuned without hunting magic numbers across the codebase.
+
+### Why this matters
+As the search grows beyond basic alpha-beta, the following numbers will matter a lot:
+- node polling interval
+- aspiration window widths
+- clock safety margins
+- TT age / replacement thresholds
+- LMR / null move / futility margins
+- future pruning constants
+
+If these stay scattered, tuning becomes messy and error-prone.
+
+### Target shape
+Add a dedicated search-constants module or config struct, then thread it through search entry points instead of hardcoding all values inside the hot code.
+
+### Principle
+Keep domain constants where they belong:
+- eval tables in eval
+- board / move encoding constants in core
+- search / pruning / time constants in search
+
+This becomes crucial later when tuning and benchmarking start in earnest.
+
+---
+
+## Move representation follow-up
+
+A possible later optimization is to make `Move` niche-optimized so that `Option<Move>` packs down to 2 bytes instead of 4.
+
+### Why it may matter
+As search grows, `Option<Move>` will likely appear more often in:
+- killer slots
+- countermove tables
+- search stack state
+- root / PV helpers
+- other search-memory structures
+
+If `Move` can guarantee a non-zero representation, Rust can use `0` as the `None` niche for `Option<Move>`.
+
+### Important caution
+This is not an urgent optimization today, and it should not be done with a casual `unsafe` constructor that merely assumes no `a1 -> a1` quiet move is ever created.
+
+If this change is made later, it should be done only with an airtight encoding / constructor design that preserves safety and keeps the representation explicit.
+
+### Priority
+Useful later as a structural cleanup and space optimization, but much lower priority than TT integration, move ordering, qsearch, and pruning.
+
+---
+
 ## 4. Recommended rewrite architecture for the first milestone
 
 The current chosen structure is a small workspace:

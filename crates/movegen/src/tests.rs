@@ -2,8 +2,9 @@ use oopsmate_core::{Move, MoveKind, Position, Square};
 
 use crate::{
     KIWIPETE, MoveList, POSITION_3, POSITION_4, POSITION_5, POSITION_6, STARTPOS, generate_all,
-    generate_captures_promotions, generate_quiets, is_legal, perft,
+    generate_captures_promotions, generate_evasions, generate_quiets, is_legal, perft,
 };
+use crate::attacks::is_square_attacked;
 
 fn sq(text: &str) -> Square {
     Square::from_algebraic(text).unwrap()
@@ -27,12 +28,34 @@ fn all_kinds() -> [MoveKind; 13] {
     ]
 }
 
-fn generated_moves(pos: &Position) -> Vec<Move> {
-    let mut list = MoveList::new();
-    generate_all(pos, &mut list);
+fn sorted_moves(list: &MoveList) -> Vec<Move> {
     let mut moves = list.as_slice().to_vec();
     moves.sort_by_key(|mv| mv.0);
     moves
+}
+
+fn generated_moves(pos: &Position) -> Vec<Move> {
+    let mut list = MoveList::new();
+    generate_all(pos, &mut list);
+    sorted_moves(&list)
+}
+
+fn generated_capture_promotion_moves(pos: &Position) -> Vec<Move> {
+    let mut list = MoveList::new();
+    generate_captures_promotions(pos, &mut list);
+    sorted_moves(&list)
+}
+
+fn generated_quiet_moves(pos: &Position) -> Vec<Move> {
+    let mut list = MoveList::new();
+    generate_quiets(pos, &mut list);
+    sorted_moves(&list)
+}
+
+fn generated_evasion_moves(pos: &Position) -> Vec<Move> {
+    let mut list = MoveList::new();
+    generate_evasions(pos, &mut list);
+    sorted_moves(&list)
 }
 
 fn legal_oracle(pos: &Position) -> Vec<Move> {
@@ -60,6 +83,48 @@ fn legal_oracle(pos: &Position) -> Vec<Move> {
     moves
 }
 
+fn staged_capture_promotion_oracle(pos: &Position) -> Vec<Move> {
+    legal_oracle(pos)
+        .into_iter()
+        .filter(|mv| mv.is_capture() || mv.is_promotion() || mv.kind() == MoveKind::EnPassant)
+        .collect()
+}
+
+fn staged_quiet_oracle(pos: &Position) -> Vec<Move> {
+    legal_oracle(pos)
+        .into_iter()
+        .filter(|mv| {
+            !mv.is_capture() && !mv.is_promotion() && mv.kind() != MoveKind::EnPassant
+        })
+        .collect()
+}
+
+fn staged_evasion_oracle(pos: &Position) -> Vec<Move> {
+    let us = pos.side_to_move();
+    let king_sq = pos.board().king_square(us);
+    if !is_square_attacked(pos, king_sq, us.flip()) {
+        return Vec::new();
+    }
+
+    legal_oracle(pos)
+}
+
+fn filtered_all_capture_promotion_moves(pos: &Position) -> Vec<Move> {
+    generated_moves(pos)
+        .into_iter()
+        .filter(|mv| mv.is_capture() || mv.is_promotion() || mv.kind() == MoveKind::EnPassant)
+        .collect()
+}
+
+fn filtered_all_quiet_moves(pos: &Position) -> Vec<Move> {
+    generated_moves(pos)
+        .into_iter()
+        .filter(|mv| {
+            !mv.is_capture() && !mv.is_promotion() && mv.kind() != MoveKind::EnPassant
+        })
+        .collect()
+}
+
 #[test]
 fn staged_generation_splits_quiets_and_captures_cleanly() {
     let pos = Position::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1").unwrap();
@@ -79,6 +144,7 @@ fn staged_generation_splits_quiets_and_captures_cleanly() {
     for &mv in quiets.as_slice() {
         assert!(!mv.is_capture());
         assert!(!mv.is_promotion());
+        assert_ne!(mv.kind(), MoveKind::EnPassant);
         assert!(all.contains(mv));
     }
 
@@ -97,6 +163,80 @@ fn generated_moves_match_legal_oracle_on_selected_positions() {
 
     for pos in &positions {
         assert_eq!(generated_moves(pos), legal_oracle(pos));
+    }
+}
+
+#[test]
+fn capture_promotion_stage_matches_oracle_on_selected_positions() {
+    let positions = [
+        Position::startpos(),
+        Position::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/2n5/3P4/8/8/4K3 w - - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/8/8/1q6/K7 w - - 0 1").unwrap(),
+    ];
+
+    for pos in &positions {
+        assert_eq!(generated_capture_promotion_moves(pos), staged_capture_promotion_oracle(pos));
+    }
+}
+
+#[test]
+fn staged_partition_matches_generate_all_on_tricky_positions() {
+    let positions = [
+        Position::startpos(),
+        Position::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1").unwrap(),
+        Position::from_fen("1r2k3/P7/8/8/8/8/8/4K3 w - - 0 1").unwrap(),
+        Position::from_fen("4k3/6P1/8/8/8/8/8/4K3 w - - 0 1").unwrap(),
+        Position::from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/8/5n2/4r3/4K3 w - - 0 1").unwrap(),
+    ];
+
+    for pos in &positions {
+        assert_eq!(generated_capture_promotion_moves(pos), filtered_all_capture_promotion_moves(pos));
+        assert_eq!(generated_quiet_moves(pos), filtered_all_quiet_moves(pos));
+    }
+}
+
+#[test]
+fn quiet_stage_matches_oracle_on_selected_positions() {
+    let positions = [
+        Position::startpos(),
+        Position::from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/3P4/8/8/4K3 w - - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/8/8/6b1/4K2R w - - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/8/2n5/8/4K3 w - - 0 1").unwrap(),
+    ];
+
+    for pos in &positions {
+        assert_eq!(generated_quiet_moves(pos), staged_quiet_oracle(pos));
+    }
+}
+
+#[test]
+fn evasion_stage_matches_oracle_on_selected_positions() {
+    let positions = [
+        Position::from_fen("4k3/8/8/8/8/8/4r3/4K3 w - - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/8/8/3r4/4K3 w - - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/1b6/8/8/4K3 w - - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/8/5n2/4r3/4K3 w - - 0 1").unwrap(),
+        Position::from_fen("4k3/8/8/8/8/8/1q6/K7 w - - 0 1").unwrap(),
+    ];
+
+    for pos in &positions {
+        assert_eq!(generated_evasion_moves(pos), staged_evasion_oracle(pos));
+    }
+}
+
+#[test]
+fn evasion_stage_is_empty_when_not_in_check() {
+    let positions = [
+        Position::startpos(),
+        Position::from_fen("4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1").unwrap(),
+        Position::from_fen("r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1").unwrap(),
+    ];
+
+    for pos in &positions {
+        assert!(generated_evasion_moves(pos).is_empty());
     }
 }
 

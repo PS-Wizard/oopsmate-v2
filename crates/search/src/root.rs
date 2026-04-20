@@ -30,9 +30,15 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
     let mut pos = position.clone();
     let mut ctx = SearchContext::new(stop, limits, pos.side_to_move());
 
+    // TODO
+    // Currently we generate the moves once, and in the iterative deepening loop we use the same
+    // moves, no reordering the best moves from the previous iteration. Root level move ordering
+    // should be looked into next.
     let mut root_moves = MoveList::new();
     generate_all(&pos, &mut root_moves);
 
+    // No moves -> current side in check -> checkmate -> loosing mate score
+    // No moves -> current side in NOT in check -> stalemate
     if root_moves.len() == 0 {
         return SearchResult {
             best_move: None,
@@ -43,6 +49,8 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
         };
     }
 
+    // Fallback move, just to have some legal move incase the search gets stopped before completing
+    // depth 1.
     let fallback_move = root_moves.as_slice()[0];
     let mut best = SearchResult {
         best_move: Some(fallback_move),
@@ -59,6 +67,7 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
         return best;
     }
 
+    // Iterative Deepening Loop
     for depth in 1..=max_depth {
         match search_root(&mut pos, root_moves.as_slice(), depth, &mut ctx, evaluator) {
             Ok((best_move, score)) => {
@@ -72,6 +81,8 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
             Err(_) => break,
         }
 
+        // Search deadline only stops between iterations, not during them.
+        // Soft deadline can be exceeded a lil, but hard deadline is enforced deeper in the tree. 
         if ctx.reached_soft_deadline() || ctx.should_stop_now() {
             break;
         }

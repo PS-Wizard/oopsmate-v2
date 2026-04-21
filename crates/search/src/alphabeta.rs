@@ -1,9 +1,12 @@
-use oopsmate_core::Position;
+use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
-use oopsmate_movegen::{MoveList, generate_all, is_square_attacked};
+use oopsmate_memory::Bound;
+use oopsmate_movegen::{generate_all, is_square_attacked, MoveList};
 
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::types::mate_score;
+
+const NO_STATIC_EVAL: i16 = i16::MIN;
 
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
@@ -20,20 +23,67 @@ pub(crate) fn search_node<E: Evaluator>(
         return Ok(0);
     }
 
+    let hash = pos.hash();
+    let alpha_orig = alpha;
+
+    if let Some(hit) = ctx.tt.probe(hash, ply) {
+        if hit.depth >= depth {
+            match hit.bound {
+                Bound::Exact => return Ok(hit.score),
+                Bound::Lower if hit.score >= beta => return Ok(hit.score),
+                Bound::Upper if hit.score <= alpha => return Ok(hit.score),
+                _ => {}
+            }
+        }
+    }
+
     if depth == 0 && !in_check(pos) {
-        return Ok(evaluator.evaluate(pos));
+        let static_eval = evaluator.evaluate(pos);
+        ctx.tt.store(
+            hash,
+            ply,
+            Move::NULL,
+            static_eval,
+            pack_static_eval(static_eval),
+            depth,
+            Bound::Exact,
+        );
+        return Ok(static_eval);
     }
 
     let mut moves = MoveList::new();
     generate_all(pos, &mut moves);
 
     if moves.len() == 0 {
-        return Ok(if in_check(pos) { -mate_score(ply) } else { 0 });
+        let score = if in_check(pos) { -mate_score(ply) } else { 0 };
+        ctx.tt.store(
+            hash,
+            ply,
+            Move::NULL,
+            score,
+            NO_STATIC_EVAL,
+            depth,
+            Bound::Exact,
+        );
+        return Ok(score);
     }
 
     if depth == 0 {
-        return Ok(evaluator.evaluate(pos));
+        let static_eval = evaluator.evaluate(pos);
+        ctx.tt.store(
+            hash,
+            ply,
+            Move::NULL,
+            static_eval,
+            pack_static_eval(static_eval),
+            depth,
+            Bound::Exact,
+        );
+        return Ok(static_eval);
     }
+
+    let mut best_move = Move::NULL;
+    let mut best_score = i32::MIN / 2;
 
     for &mv in moves.as_slice() {
         pos.make_move(mv);
@@ -46,7 +96,14 @@ pub(crate) fn search_node<E: Evaluator>(
         };
         pos.unmake_move(mv);
 
+        if score > best_score {
+            best_score = score;
+            best_move = mv;
+        }
+
         if score >= beta {
+            ctx.tt
+                .store(hash, ply, mv, score, NO_STATIC_EVAL, depth, Bound::Lower);
             return Ok(score);
         }
 
@@ -55,7 +112,22 @@ pub(crate) fn search_node<E: Evaluator>(
         }
     }
 
-    Ok(alpha)
+    let bound = if best_score <= alpha_orig {
+        Bound::Upper
+    } else {
+        Bound::Exact
+    };
+    ctx.tt.store(
+        hash,
+        ply,
+        best_move,
+        best_score,
+        NO_STATIC_EVAL,
+        depth,
+        bound,
+    );
+
+    Ok(best_score)
 }
 
 #[inline(always)]
@@ -64,4 +136,11 @@ pub(crate) fn in_check(pos: &Position) -> bool {
     let us = pos.side_to_move();
     let king_sq = pos.board().king_square(us);
     is_square_attacked(pos, king_sq, us.flip())
+}
+
+#[inline(always)]
+#[must_use]
+fn pack_static_eval(score: i32) -> i16 {
+    debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
+    score as i16
 }

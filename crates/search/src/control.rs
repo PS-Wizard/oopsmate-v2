@@ -7,7 +7,6 @@ use oopsmate_memory::TranspositionTable;
 use crate::limits::SearchLimits;
 
 pub(crate) struct SearchContext<'a> {
-    #[allow(dead_code)]
     pub(crate) tt: &'a mut TranspositionTable,
     start: Instant,
     stop: &'a AtomicBool,

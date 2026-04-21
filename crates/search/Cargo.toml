@@ -13,4 +13,5 @@ path = "src/lib.rs"
 [dependencies]
 oopsmate-core = { path = "../core" }
 oopsmate-eval = { path = "../eval" }
+oopsmate-memory = { path = "../memory" }
 oopsmate-movegen = { path = "../movegen" }

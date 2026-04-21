@@ -34,6 +34,7 @@ version = "0.1.0"
 dependencies = [
  "oopsmate-core",
  "oopsmate-eval",
+ "oopsmate-memory",
  "oopsmate-movegen",
 ]
 
@@ -43,6 +44,7 @@ version = "0.1.0"
 dependencies = [
  "oopsmate-core",
  "oopsmate-eval",
+ "oopsmate-memory",
  "oopsmate-movegen",
  "oopsmate-search",
 ]

@@ -1,18 +1,21 @@
 use std::io::{self, BufRead, Write};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use oopsmate_core::{Move, Piece, Position};
 use oopsmate_eval::PestoEval;
-use oopsmate_movegen::{MoveList, generate_all};
-use oopsmate_search::{ClockLimits, SearchLimits, SearchResult, mate_in, search_with_reporter};
+use oopsmate_memory::SearchMemory;
+use oopsmate_movegen::{generate_all, MoveList};
+use oopsmate_search::{mate_in, search_with_reporter, ClockLimits, SearchLimits, SearchResult};
 
 const ENGINE_AUTHOR: &str = "Swoyam P.";
+const DEFAULT_TT_MIB: usize = 64;
 
 pub fn run() {
     let stdin = io::stdin();
     let mut position = Position::startpos();
+    let mut memory = Some(SearchMemory::new(DEFAULT_TT_MIB));
     let mut worker = None;
 
     for line in stdin.lock().lines() {
@@ -32,22 +35,27 @@ pub fn run() {
             }
             "isready" => print_line("readyok"),
             "ucinewgame" => {
-                stop_and_join(&mut worker);
+                stop_and_join(&mut worker, &mut memory);
+                memory.as_mut().expect("search memory missing").clear();
                 position = Position::startpos();
             }
             "position" => {
-                stop_and_join(&mut worker);
+                stop_and_join(&mut worker, &mut memory);
                 if let Err(err) = set_position(&mut position, &tokens[1..]) {
                     eprintln!("position error: {err}");
                 }
             }
             "go" => {
-                stop_and_join(&mut worker);
-                worker = Some(spawn_search(position.clone(), parse_go(&tokens[1..])));
+                stop_and_join(&mut worker, &mut memory);
+                worker = Some(spawn_search(
+                    position.clone(),
+                    parse_go(&tokens[1..]),
+                    memory.take().expect("search memory missing"),
+                ));
             }
-            "stop" => stop_and_join(&mut worker),
+            "stop" => stop_and_join(&mut worker, &mut memory),
             "quit" => {
-                stop_and_join(&mut worker);
+                stop_and_join(&mut worker, &mut memory);
                 break;
             }
             "setoption" | "register" | "ponderhit" | "debug" => {}
@@ -55,15 +63,19 @@ pub fn run() {
         }
     }
 
-    stop_and_join(&mut worker);
+    stop_and_join(&mut worker, &mut memory);
 }
 
 struct SearchWorker {
     stop: Arc<AtomicBool>,
-    handle: JoinHandle<()>,
+    handle: JoinHandle<SearchMemory>,
 }
 
-fn spawn_search(position: Position, limits: SearchLimits) -> SearchWorker {
+fn spawn_search(
+    position: Position,
+    limits: SearchLimits,
+    mut memory: SearchMemory,
+) -> SearchWorker {
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
     let handle = thread::Builder::new()
@@ -73,20 +85,22 @@ fn spawn_search(position: Position, limits: SearchLimits) -> SearchWorker {
                 &position,
                 limits,
                 worker_stop.as_ref(),
+                &mut memory,
                 &PestoEval,
                 print_search_info,
             );
             print_search_result(result);
+            memory
         })
         .expect("failed to spawn search worker");
 
     SearchWorker { stop, handle }
 }
 
-fn stop_and_join(worker: &mut Option<SearchWorker>) {
+fn stop_and_join(worker: &mut Option<SearchWorker>, memory: &mut Option<SearchMemory>) {
     if let Some(worker) = worker.take() {
         worker.stop.store(true, Ordering::Relaxed);
-        let _ = worker.handle.join();
+        *memory = Some(worker.handle.join().expect("search worker panicked"));
     }
 }
 

@@ -2,10 +2,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use oopsmate_core::Color;
+use oopsmate_memory::TranspositionTable;
 
 use crate::limits::SearchLimits;
 
 pub(crate) struct SearchContext<'a> {
+    #[allow(dead_code)]
+    pub(crate) tt: &'a mut TranspositionTable,
     start: Instant,
     stop: &'a AtomicBool,
     soft_deadline: Option<Instant>,
@@ -17,11 +20,17 @@ pub(crate) struct SearchInterrupted;
 
 impl<'a> SearchContext<'a> {
     #[must_use]
-    pub(crate) fn new(stop: &'a AtomicBool, limits: SearchLimits, side_to_move: Color) -> Self {
+    pub(crate) fn new(
+        stop: &'a AtomicBool,
+        limits: SearchLimits,
+        side_to_move: Color,
+        tt: &'a mut TranspositionTable,
+    ) -> Self {
         let start = Instant::now();
         let (soft_limit, hard_limit) = limits.deadlines(side_to_move);
 
         Self {
+            tt,
             start,
             stop,
             soft_deadline: soft_limit.map(|limit| start + limit),

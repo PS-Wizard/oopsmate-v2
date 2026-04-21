@@ -13,5 +13,6 @@ path = "src/main.rs"
 [dependencies]
 oopsmate-core = { path = "../../crates/core" }
 oopsmate-eval = { path = "../../crates/eval" }
+oopsmate-memory = { path = "../../crates/memory" }
 oopsmate-movegen = { path = "../../crates/movegen" }
 oopsmate-search = { path = "../../crates/search" }

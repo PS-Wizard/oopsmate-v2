@@ -2,12 +2,13 @@ use std::sync::atomic::AtomicBool;
 
 use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
-use oopsmate_movegen::{MoveList, generate_all};
+use oopsmate_memory::SearchMemory;
+use oopsmate_movegen::{generate_all, MoveList};
 
 use crate::alphabeta::{in_check, search_node};
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
-use crate::types::{SearchResult, mate_score};
+use crate::types::{mate_score, SearchResult};
 
 const MAX_SEARCH_DEPTH: u8 = 64;
 
@@ -15,20 +16,25 @@ pub fn search<E: Evaluator>(
     position: &Position,
     limits: SearchLimits,
     stop: &AtomicBool,
+    memory: &mut SearchMemory,
     evaluator: &E,
 ) -> SearchResult {
-    search_with_reporter(position, limits, stop, evaluator, |_| {})
+    search_with_reporter(position, limits, stop, memory, evaluator, |_| {})
 }
 
 pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
     position: &Position,
     limits: SearchLimits,
     stop: &AtomicBool,
+    memory: &mut SearchMemory,
     evaluator: &E,
     mut report: F,
 ) -> SearchResult {
+    memory.new_search();
+
+    let max_depth = limits.depth.unwrap_or(MAX_SEARCH_DEPTH);
     let mut pos = position.clone();
-    let mut ctx = SearchContext::new(stop, limits, pos.side_to_move());
+    let mut ctx = SearchContext::new(stop, limits, pos.side_to_move(), &mut memory.tt);
 
     // TODO
     // Currently we generate the moves once, and in the iterative deepening loop we use the same
@@ -60,7 +66,6 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
         time_ms: 0,
     };
 
-    let max_depth = limits.depth.unwrap_or(MAX_SEARCH_DEPTH);
     if max_depth == 0 {
         best.nodes = ctx.nodes();
         best.time_ms = ctx.elapsed_ms();
@@ -82,7 +87,7 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
         }
 
         // Search deadline only stops between iterations, not during them.
-        // Soft deadline can be exceeded a lil, but hard deadline is enforced deeper in the tree. 
+        // Soft deadline can be exceeded a lil, but hard deadline is enforced deeper in the tree.
         if ctx.reached_soft_deadline() || ctx.should_stop_now() {
             break;
         }

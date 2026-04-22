@@ -5,7 +5,10 @@ use crate::constants::{
     WEIGHT_SCALE_BITS,
 };
 use crate::context::NnueContext;
-use crate::layers::{affine_forward, clipped_relu, sparse_affine_forward, sqr_clipped_relu};
+use crate::layers::{
+    affine_forward, affine_forward_single_output, clipped_relu, sparse_affine_forward,
+    sqr_clipped_relu,
+};
 use crate::network::{LayerStack, LoadedNetwork};
 use crate::transform::transform_features;
 use oopsmate_core::{Color, Position};
@@ -82,7 +85,7 @@ fn propagate_loaded_network(
     fc0_out: &mut CacheAligned<[i32; FC0_TOTAL_OUTPUTS]>,
     fc1_in: &mut CacheAligned<[u8; FC1_PADDED_INPUT_DIMS]>,
     fc1_out: &mut CacheAligned<[i32; FC1_OUTPUTS]>,
-    fc1_activated: &mut [u8; FC1_OUTPUTS],
+    fc1_activated: &mut CacheAligned<[u8; FC1_OUTPUTS]>,
 ) -> i32 {
     sparse_affine_forward(&stack.fc0, transformed, fc0_out);
 
@@ -94,12 +97,9 @@ fn propagate_loaded_network(
     );
 
     affine_forward(&stack.fc1, fc1_in, fc1_out);
-    clipped_relu(&fc1_out[..], fc1_activated);
+    clipped_relu(&fc1_out[..], &mut fc1_activated[..]);
 
-    let mut positional = stack.fc2.biases[0];
-    for index in 0..FC1_OUTPUTS {
-        positional += i32::from(stack.fc2.weights[index]) * i32::from(fc1_activated[index]);
-    }
+    let positional = affine_forward_single_output(&stack.fc2, fc1_activated);
 
     let residual = fc0_out[FC0_OUTPUTS];
     let residual_forward = residual * (600 * OUTPUT_SCALE) / (127 * (1 << WEIGHT_SCALE_BITS));

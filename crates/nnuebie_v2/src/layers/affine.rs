@@ -5,7 +5,9 @@ use crate::network::DenseLayer;
 
 #[cfg(target_arch = "x86_64")]
 use std::arch::x86_64::{
-    __m256i, _mm256_dpbusd_epi32, _mm256_load_si256, _mm256_set1_epi32, _mm256_store_si256,
+    __m256i, _mm_add_epi32, _mm_cvtsi128_si32, _mm_shuffle_epi32, _mm256_castsi256_si128,
+    _mm256_dpbusd_epi32, _mm256_extracti128_si256, _mm256_load_si256, _mm256_set1_epi32,
+    _mm256_setzero_si256, _mm256_store_si256,
 };
 
 #[inline(always)]
@@ -85,6 +87,53 @@ unsafe fn affine_forward_vnni256(layer: &DenseLayer, input: &[u8], output: &mut 
     }
 }
 
+#[inline(always)]
+pub fn affine_forward_single_output(
+    layer: &DenseLayer,
+    input: &CacheAligned<[u8; FC1_OUTPUTS]>,
+) -> i32 {
+    debug_assert_eq!(layer.input_dims, FC1_OUTPUTS);
+    debug_assert_eq!(layer.padded_input_dims, FC1_OUTPUTS);
+    debug_assert_eq!(layer.output_dims, 1, "fc_2 kernel expects 1 output");
+    debug_assert_eq!(layer.weights.len(), FC1_OUTPUTS);
+    debug_assert_eq!(layer.biases.len(), 1);
+    debug_assert_eq!(layer.weights.as_ptr() as usize % 32, 0);
+    debug_assert_eq!(input.as_ptr() as usize % 32, 0);
+
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        return affine_forward_single_output_vnni256(layer, &input[..]);
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2,avx512vnni,avx512vl")]
+unsafe fn affine_forward_single_output_vnni256(layer: &DenseLayer, input: &[u8]) -> i32 {
+    let sum = unsafe {
+        // SAFETY: fc_2 input and weights are 32-byte aligned and each exactly 32 bytes wide.
+        let input_vec = _mm256_load_si256(input.as_ptr().cast::<__m256i>());
+        let weight_vec = _mm256_load_si256(layer.weights.as_ptr().cast::<__m256i>());
+        _mm256_dpbusd_epi32(_mm256_setzero_si256(), input_vec, weight_vec)
+    };
+
+    horizontal_add_i32x8(sum) + layer.biases[0]
+}
+
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+fn horizontal_add_i32x8(sum: __m256i) -> i32 {
+    unsafe {
+        // SAFETY: pure register shuffles/adds on the eight accumulated i32 lanes.
+        let mut sum128 = _mm_add_epi32(
+            _mm256_castsi256_si128(sum),
+            _mm256_extracti128_si256(sum, 1),
+        );
+        sum128 = _mm_add_epi32(sum128, _mm_shuffle_epi32(sum128, 0b10_11_00_01));
+        sum128 = _mm_add_epi32(sum128, _mm_shuffle_epi32(sum128, 0b01_00_11_10));
+        _mm_cvtsi128_si32(sum128)
+    }
+}
+
 #[cfg(test)]
 fn affine_forward_scalar(layer: &DenseLayer, input: &[u8], output: &mut [i32]) {
     output.copy_from_slice(&layer.biases);
@@ -110,7 +159,7 @@ fn affine_forward_scalar(layer: &DenseLayer, input: &[u8], output: &mut [i32]) {
 
 #[cfg(test)]
 mod tests {
-    use super::{affine_forward, affine_forward_scalar};
+    use super::{affine_forward, affine_forward_scalar, affine_forward_single_output};
     use crate::aligned::{AlignedSlice, CacheAligned};
     use crate::constants::{FC1_OUTPUTS, FC1_PADDED_INPUT_DIMS};
     use crate::network::DenseLayer;
@@ -135,5 +184,25 @@ mod tests {
         affine_forward_scalar(&layer, &input[..], &mut scalar);
 
         assert_eq!(*simd, scalar);
+    }
+
+    #[test]
+    fn vnni256_single_output_kernel_matches_scalar_reference() {
+        let layer = DenseLayer {
+            input_dims: 32,
+            padded_input_dims: 32,
+            output_dims: 1,
+            biases: AlignedSlice::from_vec(vec![137]),
+            weights: AlignedSlice::from_vec((-16..16).collect::<Vec<i8>>()),
+        };
+        let mut input = CacheAligned::new([0u8; FC1_OUTPUTS]);
+        for (idx, slot) in input.iter_mut().enumerate() {
+            *slot = ((idx * 11 + 5) % 255) as u8;
+        }
+        let mut scalar = [0i32; 1];
+
+        affine_forward_scalar(&layer, &input[..], &mut scalar);
+
+        assert_eq!(affine_forward_single_output(&layer, &input), scalar[0]);
     }
 }

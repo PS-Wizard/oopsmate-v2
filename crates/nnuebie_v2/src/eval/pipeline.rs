@@ -80,8 +80,8 @@ fn propagate_loaded_network(
     stack: &LayerStack,
     transformed: &[u8],
     fc0_out: &mut CacheAligned<[i32; FC0_TOTAL_OUTPUTS]>,
-    fc1_in: &mut [u8; FC1_PADDED_INPUT_DIMS],
-    fc1_out: &mut [i32; FC1_OUTPUTS],
+    fc1_in: &mut CacheAligned<[u8; FC1_PADDED_INPUT_DIMS]>,
+    fc1_out: &mut CacheAligned<[i32; FC1_OUTPUTS]>,
     fc1_activated: &mut [u8; FC1_OUTPUTS],
 ) -> i32 {
     sparse_affine_forward(&stack.fc0, transformed, fc0_out);
@@ -94,7 +94,7 @@ fn propagate_loaded_network(
     );
 
     affine_forward(&stack.fc1, fc1_in, fc1_out);
-    clipped_relu(fc1_out, fc1_activated);
+    clipped_relu(&fc1_out[..], fc1_activated);
 
     let mut positional = stack.fc2.biases[0];
     for index in 0..FC1_OUTPUTS {

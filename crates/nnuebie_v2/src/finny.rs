@@ -1,6 +1,7 @@
 use crate::constants::{BIG_HALF_DIMS, MAX_ACTIVE_FEATURES, PSQT_BUCKETS, SMALL_HALF_DIMS};
 use crate::features::feature_index_from_piece_code;
 use crate::network::FeatureTransformer;
+use crate::update::{accum_add, accum_add_sub, accum_sub, psqt_add, psqt_add_sub, psqt_sub};
 use oopsmate_core::{Color, Piece, Position};
 
 const FINNY_ENTRY_COUNT: usize = 64 * 2;
@@ -217,16 +218,16 @@ fn apply_feature_deltas<const HALF_DIMS: usize>(
         let removed_psqt_row = removed_index * PSQT_BUCKETS;
         let added_psqt_row = added_index * PSQT_BUCKETS;
 
-        for dim in 0..HALF_DIMS {
-            entry.accumulation[dim] = entry.accumulation[dim]
-                .wrapping_add(feature_transformer.weights[added_weight_row + dim])
-                .wrapping_sub(feature_transformer.weights[removed_weight_row + dim]);
-        }
-
-        for bucket in 0..PSQT_BUCKETS {
-            entry.psqt[bucket] += feature_transformer.psqt_weights[added_psqt_row + bucket]
-                - feature_transformer.psqt_weights[removed_psqt_row + bucket];
-        }
+        accum_add_sub(
+            &mut entry.accumulation,
+            &feature_transformer.weights[added_weight_row..added_weight_row + HALF_DIMS],
+            &feature_transformer.weights[removed_weight_row..removed_weight_row + HALF_DIMS],
+        );
+        psqt_add_sub(
+            &mut entry.psqt,
+            &feature_transformer.psqt_weights[added_psqt_row..added_psqt_row + PSQT_BUCKETS],
+            &feature_transformer.psqt_weights[removed_psqt_row..removed_psqt_row + PSQT_BUCKETS],
+        );
     }
 
     for &feature_index in &removed[shared..] {
@@ -247,14 +248,14 @@ fn apply_feature_add<const HALF_DIMS: usize>(
     let weight_row = feature_index * HALF_DIMS;
     let psqt_row = feature_index * PSQT_BUCKETS;
 
-    for dim in 0..HALF_DIMS {
-        entry.accumulation[dim] =
-            entry.accumulation[dim].wrapping_add(feature_transformer.weights[weight_row + dim]);
-    }
-
-    for bucket in 0..PSQT_BUCKETS {
-        entry.psqt[bucket] += feature_transformer.psqt_weights[psqt_row + bucket];
-    }
+    accum_add(
+        &mut entry.accumulation,
+        &feature_transformer.weights[weight_row..weight_row + HALF_DIMS],
+    );
+    psqt_add(
+        &mut entry.psqt,
+        &feature_transformer.psqt_weights[psqt_row..psqt_row + PSQT_BUCKETS],
+    );
 }
 
 #[inline(always)]
@@ -266,12 +267,12 @@ fn apply_feature_sub<const HALF_DIMS: usize>(
     let weight_row = feature_index * HALF_DIMS;
     let psqt_row = feature_index * PSQT_BUCKETS;
 
-    for dim in 0..HALF_DIMS {
-        entry.accumulation[dim] =
-            entry.accumulation[dim].wrapping_sub(feature_transformer.weights[weight_row + dim]);
-    }
-
-    for bucket in 0..PSQT_BUCKETS {
-        entry.psqt[bucket] -= feature_transformer.psqt_weights[psqt_row + bucket];
-    }
+    accum_sub(
+        &mut entry.accumulation,
+        &feature_transformer.weights[weight_row..weight_row + HALF_DIMS],
+    );
+    psqt_sub(
+        &mut entry.psqt,
+        &feature_transformer.psqt_weights[psqt_row..psqt_row + PSQT_BUCKETS],
+    );
 }

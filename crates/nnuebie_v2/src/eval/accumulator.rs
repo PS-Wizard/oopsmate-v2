@@ -3,6 +3,11 @@ use crate::constants::{BIG_HALF_DIMS, PSQT_BUCKETS, SMALL_HALF_DIMS};
 use crate::context::{AccumulatorFrame, DirtyPiece, NnueContext};
 use crate::features::feature_index_from_piece_code;
 use crate::network::{FeatureTransformer, LoadedNetwork};
+use crate::update::{
+    accum_add, accum_add1_sub1_into, accum_add1_sub2_into, accum_add2_sub1_into,
+    accum_add2_sub2_into, accum_sub, psqt_add, psqt_add1_sub1_into, psqt_add1_sub2_into,
+    psqt_add2_sub1_into, psqt_add2_sub2_into, psqt_sub,
+};
 use oopsmate_core::{Color, Position, Square};
 
 pub(crate) fn ensure_big_frame(
@@ -260,43 +265,153 @@ fn apply_dirty_update<const HALF_DIMS: usize>(
     target_psqt: &mut [i32; PSQT_BUCKETS],
     forward: bool,
 ) {
-    target_accumulation.copy_from_slice(source_accumulation);
-    target_psqt.copy_from_slice(source_psqt);
+    let mut removed = [0usize; 2];
+    let mut added = [0usize; 2];
+    let mut removed_len = 0usize;
+    let mut added_len = 0usize;
 
     for idx in 0..dirty.len {
         let piece_code = dirty.piece_codes[idx];
-        let removed = if forward {
+        let removed_square = if forward {
             dirty.from[idx]
         } else {
             dirty.to[idx]
         };
-        let added = if forward {
+        let added_square = if forward {
             dirty.to[idx]
         } else {
             dirty.from[idx]
         };
 
-        if removed.is_valid() {
-            let feature_index =
-                feature_index_from_piece_code(perspective, piece_code, removed, king_square)
+        if removed_square.is_valid() {
+            removed[removed_len] =
+                feature_index_from_piece_code(perspective, piece_code, removed_square, king_square)
                     as usize;
-            apply_feature_sub::<HALF_DIMS>(
-                feature_transformer,
-                feature_index,
+            removed_len += 1;
+        }
+
+        if added_square.is_valid() {
+            added[added_len] =
+                feature_index_from_piece_code(perspective, piece_code, added_square, king_square)
+                    as usize;
+            added_len += 1;
+        }
+    }
+
+    match (added_len, removed_len) {
+        (0, 0) => {
+            target_accumulation.copy_from_slice(source_accumulation);
+            target_psqt.copy_from_slice(source_psqt);
+        }
+        (1, 1) => {
+            let add_row =
+                &feature_transformer.weights[added[0] * HALF_DIMS..(added[0] + 1) * HALF_DIMS];
+            let sub_row =
+                &feature_transformer.weights[removed[0] * HALF_DIMS..(removed[0] + 1) * HALF_DIMS];
+            let add_psqt = &feature_transformer.psqt_weights
+                [added[0] * PSQT_BUCKETS..(added[0] + 1) * PSQT_BUCKETS];
+            let sub_psqt = &feature_transformer.psqt_weights
+                [removed[0] * PSQT_BUCKETS..(removed[0] + 1) * PSQT_BUCKETS];
+            accum_add1_sub1_into(source_accumulation, add_row, sub_row, target_accumulation);
+            psqt_add1_sub1_into(source_psqt, add_psqt, sub_psqt, target_psqt);
+        }
+        (1, 2) => {
+            let add_row =
+                &feature_transformer.weights[added[0] * HALF_DIMS..(added[0] + 1) * HALF_DIMS];
+            let sub0_row =
+                &feature_transformer.weights[removed[0] * HALF_DIMS..(removed[0] + 1) * HALF_DIMS];
+            let sub1_row =
+                &feature_transformer.weights[removed[1] * HALF_DIMS..(removed[1] + 1) * HALF_DIMS];
+            let add_psqt = &feature_transformer.psqt_weights
+                [added[0] * PSQT_BUCKETS..(added[0] + 1) * PSQT_BUCKETS];
+            let sub0_psqt = &feature_transformer.psqt_weights
+                [removed[0] * PSQT_BUCKETS..(removed[0] + 1) * PSQT_BUCKETS];
+            let sub1_psqt = &feature_transformer.psqt_weights
+                [removed[1] * PSQT_BUCKETS..(removed[1] + 1) * PSQT_BUCKETS];
+            accum_add1_sub2_into(
+                source_accumulation,
+                add_row,
+                sub0_row,
+                sub1_row,
                 target_accumulation,
+            );
+            psqt_add1_sub2_into(source_psqt, add_psqt, sub0_psqt, sub1_psqt, target_psqt);
+        }
+        (2, 1) => {
+            let add0_row =
+                &feature_transformer.weights[added[0] * HALF_DIMS..(added[0] + 1) * HALF_DIMS];
+            let add1_row =
+                &feature_transformer.weights[added[1] * HALF_DIMS..(added[1] + 1) * HALF_DIMS];
+            let sub_row =
+                &feature_transformer.weights[removed[0] * HALF_DIMS..(removed[0] + 1) * HALF_DIMS];
+            let add0_psqt = &feature_transformer.psqt_weights
+                [added[0] * PSQT_BUCKETS..(added[0] + 1) * PSQT_BUCKETS];
+            let add1_psqt = &feature_transformer.psqt_weights
+                [added[1] * PSQT_BUCKETS..(added[1] + 1) * PSQT_BUCKETS];
+            let sub_psqt = &feature_transformer.psqt_weights
+                [removed[0] * PSQT_BUCKETS..(removed[0] + 1) * PSQT_BUCKETS];
+            accum_add2_sub1_into(
+                source_accumulation,
+                add0_row,
+                add1_row,
+                sub_row,
+                target_accumulation,
+            );
+            psqt_add2_sub1_into(source_psqt, add0_psqt, add1_psqt, sub_psqt, target_psqt);
+        }
+        (2, 2) => {
+            let add0_row =
+                &feature_transformer.weights[added[0] * HALF_DIMS..(added[0] + 1) * HALF_DIMS];
+            let add1_row =
+                &feature_transformer.weights[added[1] * HALF_DIMS..(added[1] + 1) * HALF_DIMS];
+            let sub0_row =
+                &feature_transformer.weights[removed[0] * HALF_DIMS..(removed[0] + 1) * HALF_DIMS];
+            let sub1_row =
+                &feature_transformer.weights[removed[1] * HALF_DIMS..(removed[1] + 1) * HALF_DIMS];
+            let add0_psqt = &feature_transformer.psqt_weights
+                [added[0] * PSQT_BUCKETS..(added[0] + 1) * PSQT_BUCKETS];
+            let add1_psqt = &feature_transformer.psqt_weights
+                [added[1] * PSQT_BUCKETS..(added[1] + 1) * PSQT_BUCKETS];
+            let sub0_psqt = &feature_transformer.psqt_weights
+                [removed[0] * PSQT_BUCKETS..(removed[0] + 1) * PSQT_BUCKETS];
+            let sub1_psqt = &feature_transformer.psqt_weights
+                [removed[1] * PSQT_BUCKETS..(removed[1] + 1) * PSQT_BUCKETS];
+            accum_add2_sub2_into(
+                source_accumulation,
+                add0_row,
+                add1_row,
+                sub0_row,
+                sub1_row,
+                target_accumulation,
+            );
+            psqt_add2_sub2_into(
+                source_psqt,
+                add0_psqt,
+                add1_psqt,
+                sub0_psqt,
+                sub1_psqt,
                 target_psqt,
             );
         }
-
-        if added.is_valid() {
-            let feature_index =
-                feature_index_from_piece_code(perspective, piece_code, added, king_square) as usize;
-            apply_feature_add::<HALF_DIMS>(
-                feature_transformer,
-                feature_index,
-                target_accumulation,
-                target_psqt,
-            );
+        _ => {
+            target_accumulation.copy_from_slice(source_accumulation);
+            target_psqt.copy_from_slice(source_psqt);
+            for &feature_index in &removed[..removed_len] {
+                apply_feature_sub::<HALF_DIMS>(
+                    feature_transformer,
+                    feature_index,
+                    target_accumulation,
+                    target_psqt,
+                );
+            }
+            for &feature_index in &added[..added_len] {
+                apply_feature_add::<HALF_DIMS>(
+                    feature_transformer,
+                    feature_index,
+                    target_accumulation,
+                    target_psqt,
+                );
+            }
         }
     }
 }
@@ -311,14 +426,14 @@ pub(super) fn apply_feature_add<const HALF_DIMS: usize>(
     let weight_row = feature_index * HALF_DIMS;
     let psqt_row = feature_index * PSQT_BUCKETS;
 
-    for dim in 0..HALF_DIMS {
-        accumulation[dim] =
-            accumulation[dim].wrapping_add(feature_transformer.weights[weight_row + dim]);
-    }
-
-    for bucket in 0..PSQT_BUCKETS {
-        psqt[bucket] += feature_transformer.psqt_weights[psqt_row + bucket];
-    }
+    accum_add(
+        accumulation,
+        &feature_transformer.weights[weight_row..weight_row + HALF_DIMS],
+    );
+    psqt_add(
+        psqt,
+        &feature_transformer.psqt_weights[psqt_row..psqt_row + PSQT_BUCKETS],
+    );
 }
 
 #[inline(always)]
@@ -331,12 +446,12 @@ fn apply_feature_sub<const HALF_DIMS: usize>(
     let weight_row = feature_index * HALF_DIMS;
     let psqt_row = feature_index * PSQT_BUCKETS;
 
-    for dim in 0..HALF_DIMS {
-        accumulation[dim] =
-            accumulation[dim].wrapping_sub(feature_transformer.weights[weight_row + dim]);
-    }
-
-    for bucket in 0..PSQT_BUCKETS {
-        psqt[bucket] -= feature_transformer.psqt_weights[psqt_row + bucket];
-    }
+    accum_sub(
+        accumulation,
+        &feature_transformer.weights[weight_row..weight_row + HALF_DIMS],
+    );
+    psqt_sub(
+        psqt,
+        &feature_transformer.psqt_weights[psqt_row..psqt_row + PSQT_BUCKETS],
+    );
 }

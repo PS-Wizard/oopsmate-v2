@@ -11,6 +11,7 @@ mod layers;
 mod layout;
 mod loader;
 mod transform;
+mod update;
 
 pub use context::NnueContext;
 pub use eval::EvalOutput;

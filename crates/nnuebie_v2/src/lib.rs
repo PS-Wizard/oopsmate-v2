@@ -2,10 +2,13 @@ pub mod context;
 pub mod eval;
 pub mod network;
 
+mod aligned;
+mod arch;
 mod constants;
 mod features;
 mod finny;
 mod layers;
+mod layout;
 mod loader;
 mod transform;
 

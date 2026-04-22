@@ -1,3 +1,4 @@
+use crate::aligned::CacheAligned;
 use crate::constants::{
     BIG_HALF_DIMS, FC0_TOTAL_OUTPUTS, FC1_OUTPUTS, FC1_PADDED_INPUT_DIMS, PSQT_BUCKETS,
     SMALL_HALF_DIMS,
@@ -108,10 +109,10 @@ impl DirtyPiece {
 
 #[derive(Debug)]
 pub(crate) struct AccumulatorFrame {
-    pub(crate) big_accumulation: [[i16; BIG_HALF_DIMS]; 2],
-    pub(crate) big_psqt: [[i32; PSQT_BUCKETS]; 2],
-    pub(crate) small_accumulation: [[i16; SMALL_HALF_DIMS]; 2],
-    pub(crate) small_psqt: [[i32; PSQT_BUCKETS]; 2],
+    pub(crate) big_accumulation: [CacheAligned<[i16; BIG_HALF_DIMS]>; 2],
+    pub(crate) big_psqt: [CacheAligned<[i32; PSQT_BUCKETS]>; 2],
+    pub(crate) small_accumulation: [CacheAligned<[i16; SMALL_HALF_DIMS]>; 2],
+    pub(crate) small_psqt: [CacheAligned<[i32; PSQT_BUCKETS]>; 2],
     pub(crate) big_computed: [bool; 2],
     pub(crate) small_computed: [bool; 2],
     pub(crate) dirty: DirtyPiece,
@@ -120,10 +121,10 @@ pub(crate) struct AccumulatorFrame {
 impl AccumulatorFrame {
     pub(crate) fn new() -> Self {
         Self {
-            big_accumulation: [[0; BIG_HALF_DIMS]; 2],
-            big_psqt: [[0; PSQT_BUCKETS]; 2],
-            small_accumulation: [[0; SMALL_HALF_DIMS]; 2],
-            small_psqt: [[0; PSQT_BUCKETS]; 2],
+            big_accumulation: std::array::from_fn(|_| CacheAligned::new([0; BIG_HALF_DIMS])),
+            big_psqt: std::array::from_fn(|_| CacheAligned::new([0; PSQT_BUCKETS])),
+            small_accumulation: std::array::from_fn(|_| CacheAligned::new([0; SMALL_HALF_DIMS])),
+            small_psqt: std::array::from_fn(|_| CacheAligned::new([0; PSQT_BUCKETS])),
             big_computed: [false; 2],
             small_computed: [false; 2],
             dirty: DirtyPiece::EMPTY,
@@ -152,12 +153,12 @@ pub struct NnueContext {
     pub(crate) initialized: bool,
     pub(crate) root_hash: u64,
     pub(crate) finny: FinnyTables,
-    pub(crate) big_transformed: [u8; BIG_HALF_DIMS],
-    pub(crate) small_transformed: [u8; SMALL_HALF_DIMS],
-    pub(crate) fc0_out: [i32; FC0_TOTAL_OUTPUTS],
-    pub(crate) fc1_in: [u8; FC1_PADDED_INPUT_DIMS],
-    pub(crate) fc1_out: [i32; FC1_OUTPUTS],
-    pub(crate) fc1_activated: [u8; FC1_OUTPUTS],
+    pub(crate) big_transformed: CacheAligned<[u8; BIG_HALF_DIMS]>,
+    pub(crate) small_transformed: CacheAligned<[u8; SMALL_HALF_DIMS]>,
+    pub(crate) fc0_out: CacheAligned<[i32; FC0_TOTAL_OUTPUTS]>,
+    pub(crate) fc1_in: CacheAligned<[u8; FC1_PADDED_INPUT_DIMS]>,
+    pub(crate) fc1_out: CacheAligned<[i32; FC1_OUTPUTS]>,
+    pub(crate) fc1_activated: CacheAligned<[u8; FC1_OUTPUTS]>,
 }
 
 impl Default for NnueContext {
@@ -178,12 +179,12 @@ impl NnueContext {
             initialized: false,
             root_hash: 0,
             finny: FinnyTables::new(),
-            big_transformed: [0; BIG_HALF_DIMS],
-            small_transformed: [0; SMALL_HALF_DIMS],
-            fc0_out: [0; FC0_TOTAL_OUTPUTS],
-            fc1_in: [0; FC1_PADDED_INPUT_DIMS],
-            fc1_out: [0; FC1_OUTPUTS],
-            fc1_activated: [0; FC1_OUTPUTS],
+            big_transformed: CacheAligned::new([0; BIG_HALF_DIMS]),
+            small_transformed: CacheAligned::new([0; SMALL_HALF_DIMS]),
+            fc0_out: CacheAligned::new([0; FC0_TOTAL_OUTPUTS]),
+            fc1_in: CacheAligned::new([0; FC1_PADDED_INPUT_DIMS]),
+            fc1_out: CacheAligned::new([0; FC1_OUTPUTS]),
+            fc1_activated: CacheAligned::new([0; FC1_OUTPUTS]),
         }
     }
 
@@ -226,7 +227,8 @@ fn castle_rook_squares(king_to: Square) -> (Square, Square) {
 
 #[cfg(test)]
 mod tests {
-    use super::DirtyPiece;
+    use super::{DirtyPiece, NnueContext};
+    use crate::aligned::CACHELINE_BYTES;
     use oopsmate_core::{Move, MoveKind, Piece, Position, Square, encode_piece, piece_from_code};
 
     fn sq(text: &str) -> Square {
@@ -298,5 +300,38 @@ mod tests {
     fn piece_from_code_matches_core_encoding() {
         let white_queen = encode_piece(Piece::Queen, oopsmate_core::Color::White);
         assert_eq!(piece_from_code(white_queen), Piece::Queen);
+    }
+
+    #[test]
+    fn context_hot_buffers_are_cache_aligned() {
+        let ctx = NnueContext::new();
+        let frame = &ctx.frames[0];
+
+        assert_eq!(ctx.big_transformed.as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(ctx.small_transformed.as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(ctx.fc0_out.as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(ctx.fc1_in.as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(ctx.fc1_out.as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(ctx.fc1_activated.as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(
+            frame.big_accumulation[0].as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            frame.big_accumulation[1].as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            frame.small_accumulation[0].as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            frame.small_accumulation[1].as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(frame.big_psqt[0].as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(frame.big_psqt[1].as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(frame.small_psqt[0].as_ptr() as usize % CACHELINE_BYTES, 0);
+        assert_eq!(frame.small_psqt[1].as_ptr() as usize % CACHELINE_BYTES, 0);
     }
 }

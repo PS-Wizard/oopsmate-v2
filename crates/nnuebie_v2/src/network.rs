@@ -1,9 +1,11 @@
+use crate::aligned::AlignedSlice;
 use crate::constants::{
     BIG_FEATURE_TRANSFORMER_HASH, BIG_HALF_DIMS, BIG_LAYER_STACK_HASH, BIG_NETWORK_HASH,
     DEFAULT_BIG_NETWORK_PATH, DEFAULT_SMALL_NETWORK_PATH, FC0_TOTAL_OUTPUTS, FC1_INPUT_DIMS,
     FC1_OUTPUTS, FEATURE_DIMS, LAYER_STACKS, NNUE_VERSION, SMALL_FEATURE_TRANSFORMER_HASH,
     SMALL_HALF_DIMS, SMALL_LAYER_STACK_HASH, SMALL_NETWORK_HASH,
 };
+use crate::layout::{repack_dense_weights, repack_feature_transformer};
 use crate::loader::{
     read_i8_array, read_i32_array, read_leb128_i16_array, read_leb128_i32_array, read_u32,
 };
@@ -23,9 +25,9 @@ pub struct PositionInputs {
 
 #[derive(Debug)]
 pub(crate) struct FeatureTransformer {
-    pub(crate) biases: Box<[i16]>,
-    pub(crate) weights: Box<[i16]>,
-    pub(crate) psqt_weights: Box<[i32]>,
+    pub(crate) biases: AlignedSlice<i16>,
+    pub(crate) weights: AlignedSlice<i16>,
+    pub(crate) psqt_weights: AlignedSlice<i32>,
 }
 
 #[derive(Debug)]
@@ -33,8 +35,8 @@ pub(crate) struct DenseLayer {
     pub(crate) input_dims: usize,
     pub(crate) padded_input_dims: usize,
     pub(crate) output_dims: usize,
-    pub(crate) biases: Box<[i32]>,
-    pub(crate) weights: Box<[i8]>,
+    pub(crate) biases: AlignedSlice<i32>,
+    pub(crate) weights: AlignedSlice<i8>,
 }
 
 #[derive(Debug)]
@@ -164,10 +166,15 @@ impl LoadedNetwork {
         }
 
         let half_dims = kind.half_dims();
+        let mut biases = read_leb128_i16_array(reader, half_dims)?.into_vec();
+        let mut weights = read_leb128_i16_array(reader, FEATURE_DIMS * half_dims)?.into_vec();
+        repack_feature_transformer(&mut biases, &mut weights);
         let feature_transformer = FeatureTransformer {
-            biases: read_leb128_i16_array(reader, half_dims)?,
-            weights: read_leb128_i16_array(reader, FEATURE_DIMS * half_dims)?,
-            psqt_weights: read_leb128_i32_array(reader, FEATURE_DIMS * 8)?,
+            biases: AlignedSlice::from_vec(biases),
+            weights: AlignedSlice::from_vec(weights),
+            psqt_weights: AlignedSlice::from_vec(
+                read_leb128_i32_array(reader, FEATURE_DIMS * 8)?.into_vec(),
+            ),
         };
 
         let mut layer_stacks = Vec::with_capacity(LAYER_STACKS);
@@ -205,15 +212,16 @@ impl LoadedNetwork {
 impl DenseLayer {
     fn load<R: Read>(reader: &mut R, input_dims: usize, output_dims: usize) -> io::Result<Self> {
         let padded_input_dims = input_dims.next_multiple_of(32);
-        let biases = read_i32_array(reader, output_dims)?;
-        let weights = read_i8_array(reader, output_dims * padded_input_dims)?;
+        let biases = read_i32_array(reader, output_dims)?.into_vec();
+        let mut weights = read_i8_array(reader, output_dims * padded_input_dims)?.into_vec();
+        repack_dense_weights(&mut weights, padded_input_dims, output_dims);
 
         Ok(Self {
             input_dims,
             padded_input_dims,
             output_dims,
-            biases,
-            weights,
+            biases: AlignedSlice::from_vec(biases),
+            weights: AlignedSlice::from_vec(weights),
         })
     }
 }
@@ -221,6 +229,7 @@ impl DenseLayer {
 #[cfg(test)]
 mod tests {
     use super::NnueNetworks;
+    use crate::aligned::CACHELINE_BYTES;
     use crate::constants::{BIG_NETWORK_HASH, SMALL_NETWORK_HASH};
     use oopsmate_core::{Color, Position, Square};
 
@@ -248,5 +257,39 @@ mod tests {
         assert_eq!(networks.small.half_dims, 128);
         assert_eq!(networks.big.layer_stacks.len(), 8);
         assert_eq!(networks.small.layer_stacks.len(), 8);
+    }
+
+    #[test]
+    fn loaded_network_hot_buffers_are_cache_aligned() {
+        let networks = NnueNetworks::load_default().expect("load default networks");
+
+        assert_eq!(
+            networks.big.feature_transformer.biases.as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            networks.big.feature_transformer.weights.as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            networks.big.feature_transformer.psqt_weights.as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            networks.big.layer_stacks[0].fc0.biases.as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            networks.big.layer_stacks[0].fc0.weights.as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            networks.small.layer_stacks[0].fc1.biases.as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
+        assert_eq!(
+            networks.small.layer_stacks[0].fc1.weights.as_ptr() as usize % CACHELINE_BYTES,
+            0
+        );
     }
 }

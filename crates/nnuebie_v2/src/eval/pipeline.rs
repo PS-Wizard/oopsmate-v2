@@ -1,4 +1,5 @@
 use super::accumulator::{ensure_big_frame, ensure_small_frame};
+use crate::aligned::CacheAligned;
 use crate::constants::{
     FC0_OUTPUTS, FC0_TOTAL_OUTPUTS, FC1_OUTPUTS, FC1_PADDED_INPUT_DIMS, OUTPUT_SCALE,
     WEIGHT_SCALE_BITS,
@@ -21,13 +22,16 @@ pub(super) fn evaluate_big_network(
     let depth = ctx.depth;
     let frame = &ctx.frames[depth];
     transform_features(
-        [&frame.big_accumulation[0], &frame.big_accumulation[1]],
+        [
+            &frame.big_accumulation[0][..],
+            &frame.big_accumulation[1][..],
+        ],
         side_to_move,
-        &mut ctx.big_transformed,
+        &mut ctx.big_transformed[..],
     );
     let positional_raw = propagate_loaded_network(
         &network.layer_stacks[bucket],
-        &ctx.big_transformed,
+        &ctx.big_transformed[..],
         &mut ctx.fc0_out,
         &mut ctx.fc1_in,
         &mut ctx.fc1_out,
@@ -51,13 +55,16 @@ pub(super) fn evaluate_small_network(
     let depth = ctx.depth;
     let frame = &ctx.frames[depth];
     transform_features(
-        [&frame.small_accumulation[0], &frame.small_accumulation[1]],
+        [
+            &frame.small_accumulation[0][..],
+            &frame.small_accumulation[1][..],
+        ],
         side_to_move,
-        &mut ctx.small_transformed,
+        &mut ctx.small_transformed[..],
     );
     let positional_raw = propagate_loaded_network(
         &network.layer_stacks[bucket],
-        &ctx.small_transformed,
+        &ctx.small_transformed[..],
         &mut ctx.fc0_out,
         &mut ctx.fc1_in,
         &mut ctx.fc1_out,
@@ -72,7 +79,7 @@ pub(super) fn evaluate_small_network(
 fn propagate_loaded_network(
     stack: &LayerStack,
     transformed: &[u8],
-    fc0_out: &mut [i32; FC0_TOTAL_OUTPUTS],
+    fc0_out: &mut CacheAligned<[i32; FC0_TOTAL_OUTPUTS]>,
     fc1_in: &mut [u8; FC1_PADDED_INPUT_DIMS],
     fc1_out: &mut [i32; FC1_OUTPUTS],
     fc1_activated: &mut [u8; FC1_OUTPUTS],

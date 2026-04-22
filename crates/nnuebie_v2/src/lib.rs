@@ -4,6 +4,7 @@ pub mod network;
 
 mod constants;
 mod features;
+mod finny;
 mod layers;
 mod loader;
 mod transform;

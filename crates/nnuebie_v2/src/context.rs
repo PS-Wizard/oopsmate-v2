@@ -2,6 +2,7 @@ use crate::constants::{
     BIG_HALF_DIMS, FC0_TOTAL_OUTPUTS, FC1_OUTPUTS, FC1_PADDED_INPUT_DIMS, PSQT_BUCKETS,
     SMALL_HALF_DIMS,
 };
+use crate::finny::FinnyTables;
 use oopsmate_core::{
     Color, EMPTY_SQUARE, MAX_POSITION_HISTORY, Move, MoveKind, Piece, Position, Square,
     color_from_code, encode_piece,
@@ -117,7 +118,7 @@ pub(crate) struct AccumulatorFrame {
 }
 
 impl AccumulatorFrame {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             big_accumulation: [[0; BIG_HALF_DIMS]; 2],
             big_psqt: [[0; PSQT_BUCKETS]; 2],
@@ -150,6 +151,7 @@ pub struct NnueContext {
     pub(crate) depth: usize,
     pub(crate) initialized: bool,
     pub(crate) root_hash: u64,
+    pub(crate) finny: FinnyTables,
     pub(crate) big_transformed: [u8; BIG_HALF_DIMS],
     pub(crate) small_transformed: [u8; SMALL_HALF_DIMS],
     pub(crate) fc0_out: [i32; FC0_TOTAL_OUTPUTS],
@@ -175,6 +177,7 @@ impl NnueContext {
             depth: 0,
             initialized: false,
             root_hash: 0,
+            finny: FinnyTables::new(),
             big_transformed: [0; BIG_HALF_DIMS],
             small_transformed: [0; SMALL_HALF_DIMS],
             fc0_out: [0; FC0_TOTAL_OUTPUTS],

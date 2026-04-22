@@ -4,6 +4,7 @@ members = [
     "crates/strikes",
     "crates/movegen",
     "crates/eval",
+    "crates/nnuebie_v2",
     "crates/memory",
     "crates/search",
     "apps/oopsmate",

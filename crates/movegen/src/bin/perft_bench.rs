@@ -7,11 +7,11 @@ use oopsmate_movegen::{
 
 const DEFAULT_SUITE: &[(&PerftCase, u32)] = &[
     (&STARTPOS, 5),
-    (&KIWIPETE, 4),
+    (&KIWIPETE, 5),
     (&POSITION_3, 5),
-    (&POSITION_4, 4),
-    (&POSITION_5, 4),
-    (&POSITION_6, 4),
+    (&POSITION_4, 5),
+    (&POSITION_5, 5),
+    (&POSITION_6, 5),
 ];
 
 const DEEP_SUITE: &[(&PerftCase, u32)] = &[

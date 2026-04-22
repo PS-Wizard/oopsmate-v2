@@ -2,6 +2,7 @@ pub const NNUE_VERSION: u32 = 0x7AF32F20;
 pub const FEATURE_SET_HASH: u32 = 0x7F23_4CB8;
 
 pub const FEATURE_DIMS: usize = 22_528;
+#[cfg(test)]
 pub const MAX_ACTIVE_FEATURES: usize = 32;
 pub const PSQT_BUCKETS: usize = 8;
 pub const LAYER_STACKS: usize = 8;

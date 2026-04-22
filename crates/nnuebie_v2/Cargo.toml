@@ -12,3 +12,6 @@ path = "src/lib.rs"
 
 [dependencies]
 oopsmate-core = { path = "../core" }
+
+[dev-dependencies]
+oopsmate-movegen = { path = "../movegen" }

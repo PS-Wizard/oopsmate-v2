@@ -1,7 +1,7 @@
-use crate::constants::{FEATURE_DIMS, MAX_ACTIVE_FEATURES};
-use oopsmate_core::{
-    Board, Color, EMPTY_SQUARE, Piece, Position, color_from_code, piece_from_code,
-};
+use crate::constants::FEATURE_DIMS;
+#[cfg(test)]
+use oopsmate_core::{Board, Position};
+use oopsmate_core::{Color, EMPTY_SQUARE, Piece, Square, color_from_code, piece_from_code};
 
 const NO_FLIP: usize = 0;
 const FLIP_HORIZONTAL: usize = 7;
@@ -105,55 +105,88 @@ fn piece_square_index(perspective: usize, piece: Piece, color: Color) -> usize {
 }
 
 #[inline(always)]
+#[must_use]
+pub fn feature_index_from_piece_code(
+    perspective: Color,
+    piece_code: u8,
+    square: Square,
+    king_square: Square,
+) -> u32 {
+    debug_assert!(square.is_valid());
+    debug_assert!(king_square.is_valid());
+    debug_assert_ne!(piece_code, EMPTY_SQUARE);
+
+    let perspective_index = perspective.index();
+    let square_index = square.raw() as usize;
+    let king_square_index = king_square.raw() as usize;
+    let piece = piece_from_code(piece_code);
+    let color = color_from_code(piece_code);
+    let index = (square_index ^ ORIENT_TBL[perspective_index][king_square_index])
+        + piece_square_index(perspective_index, piece, color)
+        + KING_BUCKETS[perspective_index][king_square_index];
+
+    debug_assert!(index < FEATURE_DIMS);
+    index as u32
+}
+
+#[cfg(test)]
+#[inline(always)]
 pub fn enumerate_active_features(
     position: &Position,
-    out: &mut [[u32; MAX_ACTIVE_FEATURES]; 2],
+    out: &mut [[u32; crate::constants::MAX_ACTIVE_FEATURES]; 2],
     lengths: &mut [usize; 2],
 ) -> usize {
     lengths.fill(0);
 
     let board = position.board();
-    let white_king = board.king_square(Color::White).raw() as usize;
-    let black_king = board.king_square(Color::Black).raw() as usize;
-
-    push_perspective_features(board, 0, white_king, &mut out[0], &mut lengths[0]);
-    push_perspective_features(board, 1, black_king, &mut out[1], &mut lengths[1]);
+    push_perspective_features(
+        board,
+        Color::White,
+        board.king_square(Color::White),
+        &mut out[0],
+        &mut lengths[0],
+    );
+    push_perspective_features(
+        board,
+        Color::Black,
+        board.king_square(Color::Black),
+        &mut out[1],
+        &mut lengths[1],
+    );
 
     debug_assert_eq!(lengths[0], lengths[1]);
-    debug_assert!(lengths[0] <= MAX_ACTIVE_FEATURES);
+    debug_assert!(lengths[0] <= crate::constants::MAX_ACTIVE_FEATURES);
     lengths[0]
 }
 
+#[cfg(test)]
 fn push_perspective_features(
     board: &Board,
-    perspective: usize,
-    king_square: usize,
-    out: &mut [u32; MAX_ACTIVE_FEATURES],
+    perspective: Color,
+    king_square: Square,
+    out: &mut [u32; crate::constants::MAX_ACTIVE_FEATURES],
     len: &mut usize,
 ) {
-    let orient = ORIENT_TBL[perspective][king_square];
-    let king_bucket = KING_BUCKETS[perspective][king_square];
-
     for (square, &piece_code) in board.squares().iter().enumerate() {
         if piece_code == EMPTY_SQUARE {
             continue;
         }
 
-        let piece = piece_from_code(piece_code);
-        let color = color_from_code(piece_code);
-        let index = (square ^ orient) + piece_square_index(perspective, piece, color) + king_bucket;
-
-        debug_assert!(index < FEATURE_DIMS);
-        out[*len] = index as u32;
+        out[*len] = feature_index_from_piece_code(
+            perspective,
+            piece_code,
+            Square::from_raw(square as u8),
+            king_square,
+        );
         *len += 1;
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::enumerate_active_features;
+    use super::{enumerate_active_features, feature_index_from_piece_code};
     use crate::constants::MAX_ACTIVE_FEATURES;
-    use oopsmate_core::Position;
+    use oopsmate_core::{Color, Piece, Position, Square, encode_piece};
 
     #[test]
     fn startpos_enumerates_32_features_per_perspective() {
@@ -165,5 +198,19 @@ mod tests {
 
         assert_eq!(piece_count, 32);
         assert_eq!(lengths, [32, 32]);
+    }
+
+    #[test]
+    fn direct_feature_index_matches_startpos_white_king_piece() {
+        let position = Position::startpos();
+        let board = position.board();
+        let index = feature_index_from_piece_code(
+            Color::White,
+            encode_piece(Piece::King, Color::White),
+            Square::from_algebraic("e1").unwrap(),
+            board.king_square(Color::White),
+        );
+
+        assert!(index < crate::constants::FEATURE_DIMS as u32);
     }
 }

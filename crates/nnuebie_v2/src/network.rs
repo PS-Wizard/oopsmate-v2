@@ -46,6 +46,7 @@ pub(crate) struct LayerStack {
 
 #[derive(Debug)]
 pub(crate) struct LoadedNetwork {
+    #[allow(dead_code)]
     pub(crate) half_dims: usize,
     pub(crate) feature_transformer: FeatureTransformer,
     pub(crate) layer_stacks: Box<[LayerStack]>,

@@ -1,7 +1,12 @@
 use crate::constants::{BIG_HALF_DIMS, MAX_ACTIVE_FEATURES, PSQT_BUCKETS, SMALL_HALF_DIMS};
 use crate::features::feature_index_from_piece_code;
 use crate::network::FeatureTransformer;
-use crate::update::{accum_add, accum_add_sub, accum_sub, psqt_add, psqt_add_sub, psqt_sub};
+use crate::update::{
+    accum_add, accum_add_into_both, accum_add_sub, accum_add1_sub1_into_both,
+    accum_add1_sub2_into_both, accum_add2_sub1_into_both, accum_sub, accum_sub_into_both, psqt_add,
+    psqt_add_into_both, psqt_add_sub, psqt_add1_sub1_into_both, psqt_add1_sub2_into_both,
+    psqt_add2_sub1_into_both, psqt_sub, psqt_sub_into_both,
+};
 use oopsmate_core::{Color, Piece, Position};
 
 const FINNY_ENTRY_COUNT: usize = 64 * 2;
@@ -193,10 +198,10 @@ pub(crate) fn refresh_from_finny<const HALF_DIMS: usize>(
         entry,
         &removed[..removed_len],
         &added[..added_len],
+        accumulation,
+        psqt,
     );
 
-    accumulation.copy_from_slice(&entry.accumulation);
-    psqt.copy_from_slice(&entry.psqt);
     entry.by_color = board_facts.by_color;
     entry.by_piece = board_facts.by_piece;
 }
@@ -207,36 +212,106 @@ fn apply_feature_deltas<const HALF_DIMS: usize>(
     entry: &mut FinnyEntry<HALF_DIMS>,
     removed: &[u32],
     added: &[u32],
+    accumulation: &mut [i16; HALF_DIMS],
+    psqt: &mut [i32; PSQT_BUCKETS],
 ) {
+    if removed.is_empty() && added.is_empty() {
+        accumulation.copy_from_slice(&entry.accumulation);
+        psqt.copy_from_slice(&entry.psqt);
+        return;
+    }
+
     let shared = removed.len().min(added.len());
+    let combine_last3 = removed.len().abs_diff(added.len()) == 1 && removed.len() + added.len() > 2;
+    let shared_prefix = if combine_last3 || (shared != 0 && removed.len() == added.len()) {
+        shared - 1
+    } else {
+        shared
+    };
 
-    for idx in 0..shared {
-        let removed_index = removed[idx] as usize;
-        let added_index = added[idx] as usize;
-        let removed_weight_row = removed_index * HALF_DIMS;
-        let added_weight_row = added_index * HALF_DIMS;
-        let removed_psqt_row = removed_index * PSQT_BUCKETS;
-        let added_psqt_row = added_index * PSQT_BUCKETS;
-
-        accum_add_sub(
-            &mut entry.accumulation,
-            &feature_transformer.weights[added_weight_row..added_weight_row + HALF_DIMS],
-            &feature_transformer.weights[removed_weight_row..removed_weight_row + HALF_DIMS],
-        );
-        psqt_add_sub(
-            &mut entry.psqt,
-            &feature_transformer.psqt_weights[added_psqt_row..added_psqt_row + PSQT_BUCKETS],
-            &feature_transformer.psqt_weights[removed_psqt_row..removed_psqt_row + PSQT_BUCKETS],
+    for idx in 0..shared_prefix {
+        apply_feature_add_sub(
+            feature_transformer,
+            added[idx] as usize,
+            removed[idx] as usize,
+            entry,
         );
     }
 
-    for &feature_index in &removed[shared..] {
-        apply_feature_sub(feature_transformer, feature_index as usize, entry);
+    let removed_tail = &removed[shared_prefix..];
+    let added_tail = &added[shared_prefix..];
+
+    if combine_last3 {
+        if removed_tail.len() == 2 {
+            debug_assert_eq!(added_tail.len(), 1);
+            apply_feature_add1_sub2_into_both(
+                feature_transformer,
+                added_tail[0] as usize,
+                removed_tail[0] as usize,
+                removed_tail[1] as usize,
+                entry,
+                accumulation,
+                psqt,
+            );
+        } else {
+            debug_assert_eq!(added_tail.len(), 2);
+            debug_assert_eq!(removed_tail.len(), 1);
+            apply_feature_add2_sub1_into_both(
+                feature_transformer,
+                added_tail[0] as usize,
+                added_tail[1] as usize,
+                removed_tail[0] as usize,
+                entry,
+                accumulation,
+                psqt,
+            );
+        }
+        return;
     }
 
-    for &feature_index in &added[shared..] {
-        apply_feature_add(feature_transformer, feature_index as usize, entry);
+    if !removed_tail.is_empty() && !added_tail.is_empty() {
+        debug_assert_eq!(removed_tail.len(), 1);
+        debug_assert_eq!(added_tail.len(), 1);
+        apply_feature_add1_sub1_into_both(
+            feature_transformer,
+            added_tail[0] as usize,
+            removed_tail[0] as usize,
+            entry,
+            accumulation,
+            psqt,
+        );
+        return;
     }
+
+    if let Some((&last_removed, prefix_removed)) = removed_tail.split_last() {
+        for &feature_index in prefix_removed {
+            apply_feature_sub(feature_transformer, feature_index as usize, entry);
+        }
+        apply_feature_sub_into_both(
+            feature_transformer,
+            last_removed as usize,
+            entry,
+            accumulation,
+            psqt,
+        );
+        return;
+    }
+
+    if let Some((&last_added, prefix_added)) = added_tail.split_last() {
+        for &feature_index in prefix_added {
+            apply_feature_add(feature_transformer, feature_index as usize, entry);
+        }
+        apply_feature_add_into_both(
+            feature_transformer,
+            last_added as usize,
+            entry,
+            accumulation,
+            psqt,
+        );
+        return;
+    }
+
+    unreachable!("non-empty Finny delta must materialize a final update");
 }
 
 #[inline(always)]
@@ -259,6 +334,147 @@ fn apply_feature_add<const HALF_DIMS: usize>(
 }
 
 #[inline(always)]
+fn apply_feature_add_into_both<const HALF_DIMS: usize>(
+    feature_transformer: &FeatureTransformer,
+    feature_index: usize,
+    entry: &mut FinnyEntry<HALF_DIMS>,
+    accumulation: &mut [i16; HALF_DIMS],
+    psqt: &mut [i32; PSQT_BUCKETS],
+) {
+    let weight_row = feature_index * HALF_DIMS;
+    let psqt_row = feature_index * PSQT_BUCKETS;
+
+    accum_add_into_both(
+        &mut entry.accumulation,
+        &feature_transformer.weights[weight_row..weight_row + HALF_DIMS],
+        accumulation,
+    );
+    psqt_add_into_both(
+        &mut entry.psqt,
+        &feature_transformer.psqt_weights[psqt_row..psqt_row + PSQT_BUCKETS],
+        psqt,
+    );
+}
+
+#[inline(always)]
+fn apply_feature_add_sub<const HALF_DIMS: usize>(
+    feature_transformer: &FeatureTransformer,
+    add_index: usize,
+    sub_index: usize,
+    entry: &mut FinnyEntry<HALF_DIMS>,
+) {
+    let add_weight_row = add_index * HALF_DIMS;
+    let add_psqt_row = add_index * PSQT_BUCKETS;
+    let sub_weight_row = sub_index * HALF_DIMS;
+    let sub_psqt_row = sub_index * PSQT_BUCKETS;
+
+    accum_add_sub(
+        &mut entry.accumulation,
+        &feature_transformer.weights[add_weight_row..add_weight_row + HALF_DIMS],
+        &feature_transformer.weights[sub_weight_row..sub_weight_row + HALF_DIMS],
+    );
+    psqt_add_sub(
+        &mut entry.psqt,
+        &feature_transformer.psqt_weights[add_psqt_row..add_psqt_row + PSQT_BUCKETS],
+        &feature_transformer.psqt_weights[sub_psqt_row..sub_psqt_row + PSQT_BUCKETS],
+    );
+}
+
+#[inline(always)]
+fn apply_feature_add1_sub1_into_both<const HALF_DIMS: usize>(
+    feature_transformer: &FeatureTransformer,
+    add_index: usize,
+    sub_index: usize,
+    entry: &mut FinnyEntry<HALF_DIMS>,
+    accumulation: &mut [i16; HALF_DIMS],
+    psqt: &mut [i32; PSQT_BUCKETS],
+) {
+    let add_weight_row = add_index * HALF_DIMS;
+    let add_psqt_row = add_index * PSQT_BUCKETS;
+    let sub_weight_row = sub_index * HALF_DIMS;
+    let sub_psqt_row = sub_index * PSQT_BUCKETS;
+
+    accum_add1_sub1_into_both(
+        &mut entry.accumulation,
+        &feature_transformer.weights[add_weight_row..add_weight_row + HALF_DIMS],
+        &feature_transformer.weights[sub_weight_row..sub_weight_row + HALF_DIMS],
+        accumulation,
+    );
+    psqt_add1_sub1_into_both(
+        &mut entry.psqt,
+        &feature_transformer.psqt_weights[add_psqt_row..add_psqt_row + PSQT_BUCKETS],
+        &feature_transformer.psqt_weights[sub_psqt_row..sub_psqt_row + PSQT_BUCKETS],
+        psqt,
+    );
+}
+
+#[inline(always)]
+fn apply_feature_add1_sub2_into_both<const HALF_DIMS: usize>(
+    feature_transformer: &FeatureTransformer,
+    add_index: usize,
+    sub0_index: usize,
+    sub1_index: usize,
+    entry: &mut FinnyEntry<HALF_DIMS>,
+    accumulation: &mut [i16; HALF_DIMS],
+    psqt: &mut [i32; PSQT_BUCKETS],
+) {
+    let add_weight_row = add_index * HALF_DIMS;
+    let add_psqt_row = add_index * PSQT_BUCKETS;
+    let sub0_weight_row = sub0_index * HALF_DIMS;
+    let sub0_psqt_row = sub0_index * PSQT_BUCKETS;
+    let sub1_weight_row = sub1_index * HALF_DIMS;
+    let sub1_psqt_row = sub1_index * PSQT_BUCKETS;
+
+    accum_add1_sub2_into_both(
+        &mut entry.accumulation,
+        &feature_transformer.weights[add_weight_row..add_weight_row + HALF_DIMS],
+        &feature_transformer.weights[sub0_weight_row..sub0_weight_row + HALF_DIMS],
+        &feature_transformer.weights[sub1_weight_row..sub1_weight_row + HALF_DIMS],
+        accumulation,
+    );
+    psqt_add1_sub2_into_both(
+        &mut entry.psqt,
+        &feature_transformer.psqt_weights[add_psqt_row..add_psqt_row + PSQT_BUCKETS],
+        &feature_transformer.psqt_weights[sub0_psqt_row..sub0_psqt_row + PSQT_BUCKETS],
+        &feature_transformer.psqt_weights[sub1_psqt_row..sub1_psqt_row + PSQT_BUCKETS],
+        psqt,
+    );
+}
+
+#[inline(always)]
+fn apply_feature_add2_sub1_into_both<const HALF_DIMS: usize>(
+    feature_transformer: &FeatureTransformer,
+    add0_index: usize,
+    add1_index: usize,
+    sub_index: usize,
+    entry: &mut FinnyEntry<HALF_DIMS>,
+    accumulation: &mut [i16; HALF_DIMS],
+    psqt: &mut [i32; PSQT_BUCKETS],
+) {
+    let add0_weight_row = add0_index * HALF_DIMS;
+    let add0_psqt_row = add0_index * PSQT_BUCKETS;
+    let add1_weight_row = add1_index * HALF_DIMS;
+    let add1_psqt_row = add1_index * PSQT_BUCKETS;
+    let sub_weight_row = sub_index * HALF_DIMS;
+    let sub_psqt_row = sub_index * PSQT_BUCKETS;
+
+    accum_add2_sub1_into_both(
+        &mut entry.accumulation,
+        &feature_transformer.weights[add0_weight_row..add0_weight_row + HALF_DIMS],
+        &feature_transformer.weights[add1_weight_row..add1_weight_row + HALF_DIMS],
+        &feature_transformer.weights[sub_weight_row..sub_weight_row + HALF_DIMS],
+        accumulation,
+    );
+    psqt_add2_sub1_into_both(
+        &mut entry.psqt,
+        &feature_transformer.psqt_weights[add0_psqt_row..add0_psqt_row + PSQT_BUCKETS],
+        &feature_transformer.psqt_weights[add1_psqt_row..add1_psqt_row + PSQT_BUCKETS],
+        &feature_transformer.psqt_weights[sub_psqt_row..sub_psqt_row + PSQT_BUCKETS],
+        psqt,
+    );
+}
+
+#[inline(always)]
 fn apply_feature_sub<const HALF_DIMS: usize>(
     feature_transformer: &FeatureTransformer,
     feature_index: usize,
@@ -274,5 +490,28 @@ fn apply_feature_sub<const HALF_DIMS: usize>(
     psqt_sub(
         &mut entry.psqt,
         &feature_transformer.psqt_weights[psqt_row..psqt_row + PSQT_BUCKETS],
+    );
+}
+
+#[inline(always)]
+fn apply_feature_sub_into_both<const HALF_DIMS: usize>(
+    feature_transformer: &FeatureTransformer,
+    feature_index: usize,
+    entry: &mut FinnyEntry<HALF_DIMS>,
+    accumulation: &mut [i16; HALF_DIMS],
+    psqt: &mut [i32; PSQT_BUCKETS],
+) {
+    let weight_row = feature_index * HALF_DIMS;
+    let psqt_row = feature_index * PSQT_BUCKETS;
+
+    accum_sub_into_both(
+        &mut entry.accumulation,
+        &feature_transformer.weights[weight_row..weight_row + HALF_DIMS],
+        accumulation,
+    );
+    psqt_sub_into_both(
+        &mut entry.psqt,
+        &feature_transformer.psqt_weights[psqt_row..psqt_row + PSQT_BUCKETS],
+        psqt,
     );
 }

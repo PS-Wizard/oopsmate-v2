@@ -8,10 +8,11 @@ use crate::picker::{MovePicker, TtMode};
 use crate::qsearch::{qsearch, NO_STATIC_EVAL};
 use crate::tune::{
     FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
-    FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, NULL_MOVE_MIN_DEPTH,
-    NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES, RAZOR_MARGIN_1, RAZOR_MARGIN_2, RAZOR_MARGIN_3,
-    RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3, RFP_MARGIN_4, RFP_MARGIN_5,
-    RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
+    FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, LATE_QUIET_PRUNE_MAX_DEPTH,
+    LATE_QUIET_PRUNE_MIN_DEPTH, LATE_QUIET_PRUNE_MOVE_MULT, LATE_QUIET_PRUNE_MOVE_OFFSET,
+    NULL_MOVE_MIN_DEPTH, NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES, RAZOR_MARGIN_1,
+    RAZOR_MARGIN_2, RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3,
+    RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
 };
 use crate::types::{is_mate_score, mate_score};
 
@@ -52,14 +53,14 @@ pub(crate) fn search_node<E: Evaluator>(
 
     let analysis = analyze(pos);
     let in_check = analysis.in_check();
-    let can_static_prune = can_use_static_pruning(pos, depth, alpha, beta, in_check);
-    let static_eval = if can_static_prune {
+    let can_selectively_prune = can_use_selective_pruning(pos, alpha, beta, in_check);
+    let static_eval = if needs_static_eval(depth, can_selectively_prune) {
         evaluator.evaluate(pos)
     } else {
         0
     };
 
-    if should_try_razoring(depth, static_eval, alpha, can_static_prune) {
+    if should_try_razoring(depth, static_eval, alpha, can_selectively_prune) {
         let margin = razor_margin(depth);
         let window_alpha = alpha - margin;
         let score = qsearch(pos, ply, window_alpha, window_alpha + 1, ctx, evaluator)?;
@@ -68,7 +69,7 @@ pub(crate) fn search_node<E: Evaluator>(
         }
     }
 
-    if should_prune_reverse_futility(depth, static_eval, beta, can_static_prune) {
+    if should_prune_reverse_futility(depth, static_eval, beta, can_selectively_prune) {
         let score = static_eval - rfp_margin(depth);
         ctx.tt.store(
             hash,
@@ -82,7 +83,7 @@ pub(crate) fn search_node<E: Evaluator>(
         return Ok(score);
     }
 
-    if should_try_null_move(depth, static_eval, beta, can_static_prune) {
+    if should_try_null_move(depth, static_eval, beta, can_selectively_prune) {
         evaluator.push_null_move();
         pos.make_null_move();
         let score = match search_node(
@@ -139,12 +140,23 @@ pub(crate) fn search_node<E: Evaluator>(
             depth,
             alpha,
             static_eval,
-            can_static_prune,
+            can_selectively_prune,
         ) {
             let futility_score = static_eval + futility_margin(depth);
             if futility_score > best_score {
                 best_score = futility_score;
             }
+            continue;
+        }
+
+        if should_prune_late_quiet(
+            pos,
+            mv,
+            tt_move,
+            depth,
+            searched_moves,
+            can_selectively_prune,
+        ) {
             continue;
         }
 
@@ -223,18 +235,17 @@ pub(crate) fn search_node<E: Evaluator>(
 }
 
 #[inline(always)]
-fn can_use_static_pruning(
-    pos: &Position,
-    depth: u8,
-    alpha: i32,
-    beta: i32,
-    in_check: bool,
-) -> bool {
+fn can_use_selective_pruning(pos: &Position, alpha: i32, beta: i32, in_check: bool) -> bool {
     beta == alpha + 1
         && !in_check
         && !is_mate_score(alpha)
         && !is_mate_score(beta)
         && has_non_pawn_material(pos)
+}
+
+#[inline(always)]
+const fn needs_static_eval(depth: u8, can_selectively_prune: bool) -> bool {
+    can_selectively_prune
         && (depth >= NULL_MOVE_MIN_DEPTH
             || depth <= FUTILITY_MAX_DEPTH
             || depth <= RFP_MAX_DEPTH
@@ -242,8 +253,13 @@ fn can_use_static_pruning(
 }
 
 #[inline(always)]
-fn should_try_razoring(depth: u8, static_eval: i32, alpha: i32, can_static_prune: bool) -> bool {
-    can_static_prune && depth <= RAZOR_MAX_DEPTH && static_eval + razor_margin(depth) < alpha
+fn should_try_razoring(
+    depth: u8,
+    static_eval: i32,
+    alpha: i32,
+    can_selectively_prune: bool,
+) -> bool {
+    can_selectively_prune && depth <= RAZOR_MAX_DEPTH && static_eval + razor_margin(depth) < alpha
 }
 
 #[inline(always)]
@@ -260,9 +276,9 @@ fn should_prune_reverse_futility(
     depth: u8,
     static_eval: i32,
     beta: i32,
-    can_static_prune: bool,
+    can_selectively_prune: bool,
 ) -> bool {
-    can_static_prune && depth <= RFP_MAX_DEPTH && static_eval - rfp_margin(depth) >= beta
+    can_selectively_prune && depth <= RFP_MAX_DEPTH && static_eval - rfp_margin(depth) >= beta
 }
 
 #[inline(always)]
@@ -279,8 +295,13 @@ const fn rfp_margin(depth: u8) -> i32 {
 }
 
 #[inline(always)]
-fn should_try_null_move(depth: u8, static_eval: i32, beta: i32, can_static_prune: bool) -> bool {
-    can_static_prune
+fn should_try_null_move(
+    depth: u8,
+    static_eval: i32,
+    beta: i32,
+    can_selectively_prune: bool,
+) -> bool {
+    can_selectively_prune
         && depth > NULL_MOVE_REDUCTION
         && depth >= NULL_MOVE_MIN_DEPTH
         && static_eval >= beta
@@ -294,14 +315,37 @@ fn should_prune_futility(
     depth: u8,
     alpha: i32,
     static_eval: i32,
-    can_static_prune: bool,
+    can_selectively_prune: bool,
 ) -> bool {
-    can_static_prune
+    can_selectively_prune
         && depth <= FUTILITY_MAX_DEPTH
         && mv != tt_move
         && is_quiet_move(mv)
         && static_eval + futility_margin(depth) <= alpha
         && !might_give_check(pos, mv)
+}
+
+#[inline(always)]
+fn should_prune_late_quiet(
+    pos: &Position,
+    mv: Move,
+    tt_move: Move,
+    depth: u8,
+    searched_moves: usize,
+    can_selectively_prune: bool,
+) -> bool {
+    can_selectively_prune
+        && depth >= LATE_QUIET_PRUNE_MIN_DEPTH
+        && depth <= LATE_QUIET_PRUNE_MAX_DEPTH
+        && searched_moves >= late_quiet_prune_moves(depth)
+        && mv != tt_move
+        && is_quiet_move(mv)
+        && !might_give_check(pos, mv)
+}
+
+#[inline(always)]
+const fn late_quiet_prune_moves(depth: u8) -> usize {
+    depth as usize * LATE_QUIET_PRUNE_MOVE_MULT - LATE_QUIET_PRUNE_MOVE_OFFSET
 }
 
 #[inline(always)]

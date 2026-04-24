@@ -9,7 +9,8 @@ use crate::qsearch::{qsearch, NO_STATIC_EVAL};
 use crate::tune::{
     FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
     FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, NULL_MOVE_MIN_DEPTH,
-    NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES,
+    NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3,
+    RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
 };
 use crate::types::{is_mate_score, mate_score};
 
@@ -56,6 +57,20 @@ pub(crate) fn search_node<E: Evaluator>(
     } else {
         0
     };
+
+    if should_prune_reverse_futility(depth, static_eval, beta, can_static_prune) {
+        let score = static_eval - rfp_margin(depth);
+        ctx.tt.store(
+            hash,
+            ply,
+            Move::NULL,
+            score,
+            NO_STATIC_EVAL,
+            depth,
+            Bound::Lower,
+        );
+        return Ok(score);
+    }
 
     if should_try_null_move(depth, static_eval, beta, can_static_prune) {
         evaluator.push_null_move();
@@ -210,7 +225,30 @@ fn can_use_static_pruning(
         && !is_mate_score(alpha)
         && !is_mate_score(beta)
         && has_non_pawn_material(pos)
-        && (depth >= NULL_MOVE_MIN_DEPTH || depth <= FUTILITY_MAX_DEPTH)
+        && (depth >= NULL_MOVE_MIN_DEPTH || depth <= FUTILITY_MAX_DEPTH || depth <= RFP_MAX_DEPTH)
+}
+
+#[inline(always)]
+fn should_prune_reverse_futility(
+    depth: u8,
+    static_eval: i32,
+    beta: i32,
+    can_static_prune: bool,
+) -> bool {
+    can_static_prune && depth <= RFP_MAX_DEPTH && static_eval - rfp_margin(depth) >= beta
+}
+
+#[inline(always)]
+const fn rfp_margin(depth: u8) -> i32 {
+    match depth {
+        1 => RFP_MARGIN_1,
+        2 => RFP_MARGIN_2,
+        3 => RFP_MARGIN_3,
+        4 => RFP_MARGIN_4,
+        5 => RFP_MARGIN_5,
+        6 => RFP_MARGIN_6,
+        _ => RFP_MARGIN_7,
+    }
 }
 
 #[inline(always)]

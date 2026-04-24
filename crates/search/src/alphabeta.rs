@@ -10,9 +10,10 @@ use crate::tune::{
     FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
     FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, LATE_QUIET_PRUNE_MAX_DEPTH,
     LATE_QUIET_PRUNE_MIN_DEPTH, LATE_QUIET_PRUNE_MOVE_MULT, LATE_QUIET_PRUNE_MOVE_OFFSET,
-    NULL_MOVE_MIN_DEPTH, NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES, RAZOR_MARGIN_1,
-    RAZOR_MARGIN_2, RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3,
-    RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
+    LMR_FULL_DEPTH_MOVES, LMR_MIN_DEPTH, LMR_REDUCTION, NULL_MOVE_MIN_DEPTH, NULL_MOVE_REDUCTION,
+    PVS_FULL_WINDOW_MOVES, RAZOR_MARGIN_1, RAZOR_MARGIN_2, RAZOR_MARGIN_3, RAZOR_MAX_DEPTH,
+    RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3, RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6,
+    RFP_MARGIN_7, RFP_MAX_DEPTH,
 };
 use crate::types::{is_mate_score, mate_score};
 
@@ -201,8 +202,14 @@ pub(crate) fn search_node<E: Evaluator>(
         pos.make_move(mv);
         let score = match search_child(
             pos,
-            depth - 1,
+            depth,
             node,
+            mv,
+            tt_move,
+            quiet,
+            maybe_check,
+            in_check,
+            searched_moves,
             alpha,
             beta,
             searched_moves >= PVS_FULL_WINDOW_MOVES,
@@ -427,16 +434,50 @@ fn search_child<E: Evaluator>(
     pos: &mut Position,
     depth: u8,
     node: NodeState,
+    mv: Move,
+    tt_move: Move,
+    quiet: bool,
+    maybe_check: bool,
+    in_check: bool,
+    searched_moves: usize,
     alpha: i32,
     beta: i32,
     try_null_window: bool,
     ctx: &mut SearchContext<'_>,
     evaluator: &mut E,
 ) -> Result<i32, SearchInterrupted> {
+    let child_depth = depth - 1;
+
+    if should_reduce_lmr(
+        mv,
+        tt_move,
+        quiet,
+        maybe_check,
+        in_check,
+        depth,
+        node,
+        searched_moves,
+        try_null_window,
+    ) {
+        let reduced_depth = child_depth.saturating_sub(LMR_REDUCTION);
+        let score = -search_node(
+            pos,
+            reduced_depth,
+            node.child(false, -alpha - 1, -alpha),
+            -alpha - 1,
+            -alpha,
+            ctx,
+            evaluator,
+        )?;
+        if score <= alpha {
+            return Ok(score);
+        }
+    }
+
     if try_null_window {
         let score = -search_node(
             pos,
-            depth,
+            child_depth,
             node.child(false, -alpha - 1, -alpha),
             -alpha - 1,
             -alpha,
@@ -450,13 +491,35 @@ fn search_child<E: Evaluator>(
 
     Ok(-search_node(
         pos,
-        depth,
+        child_depth,
         node.child(node.pv_node, -beta, -alpha),
         -beta,
         -alpha,
         ctx,
         evaluator,
     )?)
+}
+
+#[inline(always)]
+fn should_reduce_lmr(
+    mv: Move,
+    tt_move: Move,
+    quiet: bool,
+    maybe_check: bool,
+    in_check: bool,
+    depth: u8,
+    node: NodeState,
+    searched_moves: usize,
+    try_null_window: bool,
+) -> bool {
+    try_null_window
+        && !node.pv_node
+        && !in_check
+        && depth >= LMR_MIN_DEPTH
+        && searched_moves >= LMR_FULL_DEPTH_MOVES
+        && mv != tt_move
+        && quiet
+        && !maybe_check
 }
 
 #[inline(always)]

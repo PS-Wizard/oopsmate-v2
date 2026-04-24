@@ -2,6 +2,7 @@
 // than producing a pseudo-legal list and filtering it afterward.
 mod analysis;
 mod attacks;
+mod checks;
 mod generate;
 mod king;
 mod leapers;
@@ -16,6 +17,7 @@ mod util;
 
 pub use analysis::{Analysis, analyze};
 pub use attacks::{is_square_attacked, is_square_attacked_with_occ};
+pub use checks::might_give_check;
 pub use generate::{
     generate_all, generate_all_with_analysis, generate_captures_promotions,
     generate_captures_promotions_with_analysis, generate_evasions, generate_evasions_with_analysis,

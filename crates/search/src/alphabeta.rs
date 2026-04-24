@@ -1,12 +1,16 @@
 use oopsmate_core::{Move, MoveKind, Piece, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
-use oopsmate_movegen::analyze;
+use oopsmate_movegen::{analyze, might_give_check};
 
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::picker::{MovePicker, TtMode};
-use crate::qsearch::{NO_STATIC_EVAL, qsearch};
-use crate::tune::{NULL_MOVE_MIN_DEPTH, NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES};
+use crate::qsearch::{qsearch, NO_STATIC_EVAL};
+use crate::tune::{
+    FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
+    FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, NULL_MOVE_MIN_DEPTH,
+    NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES,
+};
 use crate::types::{is_mate_score, mate_score};
 
 pub(crate) fn search_node<E: Evaluator>(
@@ -45,9 +49,15 @@ pub(crate) fn search_node<E: Evaluator>(
     }
 
     let analysis = analyze(pos);
-    if should_try_null_move(pos, depth, alpha, beta, analysis.in_check())
-        && evaluator.evaluate(pos) >= beta
-    {
+    let in_check = analysis.in_check();
+    let can_static_prune = can_use_static_pruning(pos, depth, alpha, beta, in_check);
+    let static_eval = if can_static_prune {
+        evaluator.evaluate(pos)
+    } else {
+        0
+    };
+
+    if should_try_null_move(depth, static_eval, beta, can_static_prune) {
         evaluator.push_null_move();
         pos.make_null_move();
         let score = match search_node(
@@ -70,13 +80,20 @@ pub(crate) fn search_node<E: Evaluator>(
         evaluator.pop_move();
 
         if score >= beta {
-            ctx.tt
-                .store(hash, ply, Move::NULL, beta, NO_STATIC_EVAL, depth, Bound::Lower);
+            ctx.tt.store(
+                hash,
+                ply,
+                Move::NULL,
+                beta,
+                NO_STATIC_EVAL,
+                depth,
+                Bound::Lower,
+            );
             return Ok(beta);
         }
     }
 
-    let tt_mode = if analysis.in_check() {
+    let tt_mode = if in_check {
         TtMode::ValidateInStage
     } else {
         TtMode::BlindTrust
@@ -90,6 +107,22 @@ pub(crate) fn search_node<E: Evaluator>(
 
     while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
         saw_legal_move = true;
+        if should_prune_futility(
+            pos,
+            mv,
+            tt_move,
+            depth,
+            alpha,
+            static_eval,
+            can_static_prune,
+        ) {
+            let futility_score = static_eval + futility_margin(depth);
+            if futility_score > best_score {
+                best_score = futility_score;
+            }
+            continue;
+        }
+
         evaluator.push_move(pos, mv);
         pos.make_move(mv);
         let score = match search_child(
@@ -133,11 +166,7 @@ pub(crate) fn search_node<E: Evaluator>(
     }
 
     if !saw_legal_move {
-        let score = if analysis.in_check() {
-            -mate_score(ply)
-        } else {
-            0
-        };
+        let score = if in_check { -mate_score(ply) } else { 0 };
         ctx.tt.store(
             hash,
             ply,
@@ -169,27 +198,66 @@ pub(crate) fn search_node<E: Evaluator>(
 }
 
 #[inline(always)]
-fn should_try_null_move(
+fn can_use_static_pruning(
     pos: &Position,
     depth: u8,
     alpha: i32,
     beta: i32,
     in_check: bool,
 ) -> bool {
-    depth > NULL_MOVE_REDUCTION
-        && depth >= NULL_MOVE_MIN_DEPTH
-        && beta == alpha + 1
+    beta == alpha + 1
         && !in_check
         && !is_mate_score(alpha)
         && !is_mate_score(beta)
         && has_non_pawn_material(pos)
+        && (depth >= NULL_MOVE_MIN_DEPTH || depth <= FUTILITY_MAX_DEPTH)
+}
+
+#[inline(always)]
+fn should_try_null_move(depth: u8, static_eval: i32, beta: i32, can_static_prune: bool) -> bool {
+    can_static_prune
+        && depth > NULL_MOVE_REDUCTION
+        && depth >= NULL_MOVE_MIN_DEPTH
+        && static_eval >= beta
+}
+
+#[inline(always)]
+fn should_prune_futility(
+    pos: &Position,
+    mv: Move,
+    tt_move: Move,
+    depth: u8,
+    alpha: i32,
+    static_eval: i32,
+    can_static_prune: bool,
+) -> bool {
+    can_static_prune
+        && depth <= FUTILITY_MAX_DEPTH
+        && mv != tt_move
+        && is_quiet_move(mv)
+        && static_eval + futility_margin(depth) <= alpha
+        && !might_give_check(pos, mv)
+}
+
+#[inline(always)]
+const fn futility_margin(depth: u8) -> i32 {
+    match depth {
+        1 => FUTILITY_MARGIN_1,
+        2 => FUTILITY_MARGIN_2,
+        3 => FUTILITY_MARGIN_3,
+        4 => FUTILITY_MARGIN_4,
+        5 => FUTILITY_MARGIN_5,
+        6 => FUTILITY_MARGIN_6,
+        _ => FUTILITY_MARGIN_7,
+    }
 }
 
 #[inline(always)]
 fn has_non_pawn_material(pos: &Position) -> bool {
     let board = pos.board();
     let side = pos.side_to_move();
-    let pieces = board.color_bb(side) & !(board.piece_bb(Piece::Pawn) | board.piece_bb(Piece::King));
+    let pieces =
+        board.color_bb(side) & !(board.piece_bb(Piece::Pawn) | board.piece_bb(Piece::King));
     pieces != 0
 }
 

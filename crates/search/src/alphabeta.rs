@@ -47,7 +47,7 @@ pub(crate) fn search_node<E: Evaluator>(
     let tt_mode = if analysis.in_check() {
         TtMode::ValidateInStage
     } else {
-        TtMode::PseudoLegal
+        TtMode::BlindTrust
     };
     let mut picker = MovePicker::new(pos, &analysis, tt_move, tt_mode);
     let mut best_move = Move::NULL;

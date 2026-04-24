@@ -3,13 +3,13 @@ use std::mem::MaybeUninit;
 use oopsmate_core::{Move, MoveKind, Piece, Position};
 use oopsmate_movegen::{
     Analysis, MAX_MOVES, MoveList, generate_captures_promotions_with_analysis,
-    generate_evasions_with_analysis, generate_quiets_with_analysis, is_pseudo_legal,
+    generate_evasions_with_analysis, generate_quiets_with_analysis,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TtMode {
     ValidateInStage,
-    PseudoLegal,
+    BlindTrust,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,19 +35,14 @@ pub(crate) struct MovePicker {
 
 impl MovePicker {
     #[must_use]
-    pub(crate) fn new(pos: &Position, analysis: &Analysis, tt_move: Move, tt_mode: TtMode) -> Self {
+    pub(crate) fn new(_pos: &Position, analysis: &Analysis, tt_move: Move, tt_mode: TtMode) -> Self {
         let tt_move = match tt_mode {
-            TtMode::ValidateInStage if tt_move != Move::NULL && !has_valid_kind(tt_move) => {
-                Move::NULL
-            }
-            TtMode::ValidateInStage => tt_move,
-            TtMode::PseudoLegal
-                if tt_move != Move::NULL
-                    && (!has_valid_kind(tt_move) || !is_pseudo_legal(pos, tt_move)) =>
+            TtMode::ValidateInStage | TtMode::BlindTrust
+                if tt_move != Move::NULL && !has_valid_kind(tt_move) =>
             {
                 Move::NULL
             }
-            TtMode::PseudoLegal => tt_move,
+            TtMode::ValidateInStage | TtMode::BlindTrust => tt_move,
         };
 
         Self {
@@ -104,7 +99,7 @@ impl MovePicker {
         }
 
         match self.tt_mode {
-            TtMode::PseudoLegal => Some(self.tt_move),
+            TtMode::BlindTrust => Some(self.tt_move),
             TtMode::ValidateInStage => {
                 let validation_phase = if self.in_check {
                     Phase::Evasions
@@ -294,11 +289,11 @@ mod tests {
     }
 
     #[test]
-    fn pseudo_legal_mode_rejects_empty_from_square_tt_move() {
+    fn blind_trust_mode_still_rejects_invalid_move_kind() {
         let pos = Position::from_fen("4k3/8/8/2n5/3P4/8/8/4K3 w - - 0 1").unwrap();
         let analysis = analyze(&pos);
-        let bogus = Move::new(sq("a1"), sq("a2"), MoveKind::Quiet);
-        let mut picker = MovePicker::new(&pos, &analysis, bogus, TtMode::PseudoLegal);
+        let bogus = Move((sq("a1").raw() as u16) | ((sq("a2").raw() as u16) << 6) | (5 << 12));
+        let mut picker = MovePicker::new(&pos, &analysis, bogus, TtMode::BlindTrust);
 
         assert_ne!(picker.next_move(&pos, &analysis), Some(bogus));
     }

@@ -200,6 +200,17 @@ impl NnueContext {
     }
 
     #[inline(always)]
+    pub fn push_null_move(&mut self) {
+        debug_assert!(
+            self.initialized,
+            "NNUE context must be reset to the root first"
+        );
+        debug_assert!(self.depth + 1 < self.frames.len(), "NNUE stack overflow");
+        self.depth += 1;
+        self.frames[self.depth].reset_as_child(DirtyPiece::EMPTY);
+    }
+
+    #[inline(always)]
     pub fn pop(&mut self) {
         debug_assert!(self.depth != 0, "NNUE stack underflow");
         self.depth -= 1;

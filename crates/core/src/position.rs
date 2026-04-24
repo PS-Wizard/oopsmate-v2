@@ -374,6 +374,46 @@ impl Position {
     }
 
     #[inline(always)]
+    pub fn make_null_move(&mut self) {
+        self.undo_stack.push(Undo {
+            moved: EMPTY_SQUARE,
+            captured: EMPTY_SQUARE,
+            castling: self.castling,
+            ep_square: self.ep_square,
+            rule50: self.rule50,
+            fullmove: self.fullmove,
+            hash: self.hash,
+        });
+
+        if !self.ep_square.is_none() {
+            self.hash ^= ep_key(self.ep_square);
+            self.ep_square = Square::NONE;
+        }
+
+        self.rule50 += 1;
+        if self.side_to_move == Color::Black {
+            self.fullmove += 1;
+        }
+        self.side_to_move = self.side_to_move.flip();
+        self.hash ^= SIDE_KEY;
+        self.ply += 1;
+        self.repetition.push(self.hash);
+    }
+
+    #[inline(always)]
+    pub fn unmake_null_move(&mut self) {
+        let undo = self.undo_stack.pop();
+        let _ = self.repetition.pop();
+        self.ply -= 1;
+        self.side_to_move = self.side_to_move.flip();
+        self.castling = undo.castling;
+        self.ep_square = undo.ep_square;
+        self.rule50 = undo.rule50;
+        self.fullmove = undo.fullmove;
+        self.hash = undo.hash;
+    }
+
+    #[inline(always)]
     pub fn unmake_move(&mut self, mv: Move) {
         // Unmake restores the exact pre-move reversible state from Undo, while
         // board piece placement is reversed from the original move encoding.
@@ -561,6 +601,26 @@ mod tests {
         assert_eq!(pos.hash(), original);
         assert_eq!(pos.piece_at(sq("g1")), Some((Piece::Knight, Color::White)));
         assert_eq!(pos.piece_at(sq("f3")), None);
+    }
+
+    #[test]
+    fn null_move_round_trip_restores_state() {
+        let mut pos = Position::from_fen("4k3/8/8/8/8/8/4P3/4K3 b - e3 7 12").unwrap();
+        let original = pos.clone();
+
+        pos.make_null_move();
+        assert_eq!(pos.side_to_move(), Color::White);
+        assert_eq!(pos.ep_square(), Square::NONE);
+        assert_ne!(pos.hash(), original.hash());
+
+        pos.unmake_null_move();
+        assert_eq!(pos.hash(), original.hash());
+        assert_eq!(pos.compute_hash(), original.hash());
+        assert_eq!(pos.side_to_move(), original.side_to_move());
+        assert_eq!(pos.castling(), original.castling());
+        assert_eq!(pos.ep_square(), original.ep_square());
+        assert_eq!(pos.rule50(), original.rule50());
+        assert_eq!(pos.fullmove(), original.fullmove());
     }
 
     #[test]

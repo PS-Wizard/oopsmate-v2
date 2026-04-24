@@ -6,6 +6,8 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ("ASPIRATION_MIN_DEPTH", "u8", "5"),
     ("ASPIRATION_WINDOW", "i32", "150"),
     ("ASPIRATION_MAX_WINDOW", "i32", "1000"),
+    ("NULL_MOVE_MIN_DEPTH", "u8", "4"),
+    ("NULL_MOVE_REDUCTION", "u8", "2"),
     ("MOVE_PICKER_CAPTURE_BASE", "i32", "10000"),
     ("MOVE_PICKER_PROMOTION_BASE", "i32", "20000"),
     ("QSEARCH_DELTA_MARGIN", "i32", "200"),
@@ -36,7 +38,9 @@ fn main() {
 fn validate_int(name: &str, value: &str, ty: &str) {
     match ty {
         "u8" => {
-            value.parse::<u8>().unwrap_or_else(|_| panic!("{name} must be a u8, got {value:?}"));
+            value
+                .parse::<u8>()
+                .unwrap_or_else(|_| panic!("{name} must be a u8, got {value:?}"));
         }
         "usize" => {
             value

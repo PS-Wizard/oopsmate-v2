@@ -11,6 +11,9 @@ pub trait Evaluator {
     fn push_move(&mut self, _position: &Position, _mv: Move) {}
 
     #[inline(always)]
+    fn push_null_move(&mut self) {}
+
+    #[inline(always)]
     fn pop_move(&mut self) {}
 
     fn evaluate(&mut self, position: &Position) -> i32;
@@ -46,6 +49,11 @@ impl Evaluator for NnueEval {
     #[inline(always)]
     fn push_move(&mut self, position: &Position, mv: Move) {
         self.context.push_move(position, mv);
+    }
+
+    #[inline(always)]
+    fn push_null_move(&mut self) {
+        self.context.push_null_move();
     }
 
     #[inline(always)]

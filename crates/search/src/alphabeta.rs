@@ -1,4 +1,4 @@
-use oopsmate_core::{Move, MoveKind, Position};
+use oopsmate_core::{Move, MoveKind, Piece, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
 use oopsmate_movegen::analyze;
@@ -6,8 +6,8 @@ use oopsmate_movegen::analyze;
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::picker::{MovePicker, TtMode};
 use crate::qsearch::{NO_STATIC_EVAL, qsearch};
-use crate::tune::PVS_FULL_WINDOW_MOVES;
-use crate::types::mate_score;
+use crate::tune::{NULL_MOVE_MIN_DEPTH, NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES};
+use crate::types::{is_mate_score, mate_score};
 
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
@@ -45,6 +45,37 @@ pub(crate) fn search_node<E: Evaluator>(
     }
 
     let analysis = analyze(pos);
+    if should_try_null_move(pos, depth, alpha, beta, analysis.in_check())
+        && evaluator.evaluate(pos) >= beta
+    {
+        evaluator.push_null_move();
+        pos.make_null_move();
+        let score = match search_node(
+            pos,
+            depth - 1 - NULL_MOVE_REDUCTION,
+            ply + 1,
+            -beta,
+            -beta + 1,
+            ctx,
+            evaluator,
+        ) {
+            Ok(score) => -score,
+            Err(err) => {
+                pos.unmake_null_move();
+                evaluator.pop_move();
+                return Err(err);
+            }
+        };
+        pos.unmake_null_move();
+        evaluator.pop_move();
+
+        if score >= beta {
+            ctx.tt
+                .store(hash, ply, Move::NULL, beta, NO_STATIC_EVAL, depth, Bound::Lower);
+            return Ok(beta);
+        }
+    }
+
     let tt_mode = if analysis.in_check() {
         TtMode::ValidateInStage
     } else {
@@ -135,6 +166,31 @@ pub(crate) fn search_node<E: Evaluator>(
     );
 
     Ok(best_score)
+}
+
+#[inline(always)]
+fn should_try_null_move(
+    pos: &Position,
+    depth: u8,
+    alpha: i32,
+    beta: i32,
+    in_check: bool,
+) -> bool {
+    depth > NULL_MOVE_REDUCTION
+        && depth >= NULL_MOVE_MIN_DEPTH
+        && beta == alpha + 1
+        && !in_check
+        && !is_mate_score(alpha)
+        && !is_mate_score(beta)
+        && has_non_pawn_material(pos)
+}
+
+#[inline(always)]
+fn has_non_pawn_material(pos: &Position) -> bool {
+    let board = pos.board();
+    let side = pos.side_to_move();
+    let pieces = board.color_bb(side) & !(board.piece_bb(Piece::Pawn) | board.piece_bb(Piece::King));
+    pieces != 0
 }
 
 #[inline(always)]

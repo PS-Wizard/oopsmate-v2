@@ -154,8 +154,16 @@ fn search_root_aspirated<E: Evaluator>(
 
     loop {
         order_root_moves(root_moves, root_scores);
-        let (best_move, score) =
-            search_root(pos, root_moves, root_scores, depth, alpha, beta, ctx, evaluator)?;
+        let (best_move, score) = search_root(
+            pos,
+            root_moves,
+            root_scores,
+            depth,
+            alpha,
+            beta,
+            ctx,
+            evaluator,
+        )?;
         if score <= alpha {
             delta = next_aspiration_delta(delta);
             if delta > ASPIRATION_MAX_WINDOW {

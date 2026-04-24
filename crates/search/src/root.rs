@@ -3,15 +3,15 @@ use std::sync::atomic::AtomicBool;
 use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::SearchMemory;
-use oopsmate_movegen::{MoveList, analyze, generate_all_with_analysis};
+use oopsmate_movegen::{MAX_MOVES, MoveList, analyze, generate_all_with_analysis};
 
 use crate::alphabeta::search_node;
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
-use crate::picker::{MovePicker, TtMode};
 use crate::types::{SearchResult, mate_score};
 
 const MAX_SEARCH_DEPTH: u8 = 64;
+const ROOT_SCORE_UNSEARCHED: i32 = i32::MIN;
 
 pub fn search<E: Evaluator>(
     position: &Position,
@@ -69,6 +69,10 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
     // Fallback move, just to have some legal move incase the search gets stopped before completing
     // depth 1.
     let fallback_move = root_moves.as_slice()[0];
+    let mut root_scores = [ROOT_SCORE_UNSEARCHED; MAX_MOVES];
+    if let Some(hit) = ctx.tt.probe(pos.hash(), 0) {
+        seed_root_tt_move(&root_moves, &mut root_scores, hit.best_move);
+    }
     let mut best = SearchResult {
         best_move: Some(fallback_move),
         score: evaluator.evaluate(&pos),
@@ -85,7 +89,15 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
 
     // Iterative Deepening Loop
     for depth in 1..=max_depth {
-        match search_root(&mut pos, depth, &mut ctx, evaluator) {
+        order_root_moves(&mut root_moves, &mut root_scores);
+        match search_root(
+            &mut pos,
+            &mut root_moves,
+            &mut root_scores,
+            depth,
+            &mut ctx,
+            evaluator,
+        ) {
             Ok((best_move, score)) => {
                 best.best_move = Some(best_move);
                 best.score = score;
@@ -111,27 +123,23 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
 
 fn search_root<E: Evaluator>(
     pos: &mut Position,
+    root_moves: &mut MoveList,
+    root_scores: &mut [i32; MAX_MOVES],
     depth: u8,
     ctx: &mut SearchContext<'_>,
     evaluator: &mut E,
 ) -> Result<(Move, i32), SearchInterrupted> {
-    let analysis = analyze(pos);
-    let tt_move = ctx
-        .tt
-        .probe(pos.hash(), 0)
-        .map_or(Move::NULL, |hit| hit.best_move);
-    let mut picker = MovePicker::new(pos, &analysis, tt_move, TtMode::ValidateInStage);
     let mut best_move = Move::NULL;
     let mut alpha = i32::MIN / 2;
     let beta = i32::MAX / 2;
-    let mut saw_move = false;
+    let move_count = root_moves.len();
 
-    while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
-        saw_move = true;
+    for index in 0..move_count {
         if ctx.should_stop_now() {
             return Err(SearchInterrupted);
         }
 
+        let mv = root_moves.as_slice()[index];
         evaluator.push_move(pos, mv);
         pos.make_move(mv);
         let score = match search_node(pos, depth - 1, 1, -beta, -alpha, ctx, evaluator) {
@@ -144,6 +152,7 @@ fn search_root<E: Evaluator>(
         };
         pos.unmake_move(mv);
         evaluator.pop_move();
+        root_scores[index] = score;
 
         if score > alpha {
             alpha = score;
@@ -151,6 +160,31 @@ fn search_root<E: Evaluator>(
         }
     }
 
-    debug_assert!(saw_move, "root search called without legal moves");
+    debug_assert!(move_count != 0, "root search called without legal moves");
     Ok((best_move, alpha))
+}
+
+fn order_root_moves(root_moves: &mut MoveList, root_scores: &mut [i32; MAX_MOVES]) {
+    let len = root_moves.len();
+    for index in 1..len {
+        let mut current = index;
+        while current != 0 && root_scores[current] > root_scores[current - 1] {
+            root_moves.swap(current, current - 1);
+            root_scores.swap(current, current - 1);
+            current -= 1;
+        }
+    }
+}
+
+fn seed_root_tt_move(root_moves: &MoveList, root_scores: &mut [i32; MAX_MOVES], tt_move: Move) {
+    if tt_move == Move::NULL {
+        return;
+    }
+
+    for (index, &mv) in root_moves.as_slice().iter().enumerate() {
+        if mv == tt_move {
+            root_scores[index] = i32::MAX;
+            return;
+        }
+    }
 }

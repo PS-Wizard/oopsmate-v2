@@ -16,17 +16,42 @@ use crate::tune::{
 };
 use crate::types::{is_mate_score, mate_score};
 
+#[derive(Clone, Copy)]
+pub(crate) struct NodeState {
+    pub(crate) ply: u8,
+    pub(crate) pv_node: bool,
+    pub(crate) cut_node: bool,
+}
+
+impl NodeState {
+    #[inline(always)]
+    #[must_use]
+    pub(crate) const fn new(ply: u8, pv_node: bool, alpha: i32, beta: i32) -> Self {
+        Self {
+            ply,
+            pv_node,
+            cut_node: beta == alpha + 1,
+        }
+    }
+
+    #[inline(always)]
+    #[must_use]
+    const fn child(self, pv_node: bool, alpha: i32, beta: i32) -> Self {
+        Self::new(self.ply + 1, pv_node, alpha, beta)
+    }
+}
+
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
     depth: u8,
-    ply: u8,
+    node: NodeState,
     mut alpha: i32,
     beta: i32,
     ctx: &mut SearchContext<'_>,
     evaluator: &mut E,
 ) -> Result<i32, SearchInterrupted> {
     if depth == 0 {
-        return qsearch(pos, ply, alpha, beta, ctx, evaluator);
+        return qsearch(pos, node.ply, alpha, beta, ctx, evaluator);
     }
 
     ctx.enter_node()?;
@@ -39,7 +64,7 @@ pub(crate) fn search_node<E: Evaluator>(
     let alpha_orig = alpha;
     let mut tt_move = Move::NULL;
 
-    if let Some(hit) = ctx.tt.probe(hash, ply) {
+    if let Some(hit) = ctx.tt.probe(hash, node.ply) {
         tt_move = hit.best_move;
         if hit.depth >= depth {
             match hit.bound {
@@ -53,7 +78,7 @@ pub(crate) fn search_node<E: Evaluator>(
 
     let analysis = analyze(pos);
     let in_check = analysis.in_check();
-    let can_selectively_prune = can_use_selective_pruning(pos, alpha, beta, in_check);
+    let can_selectively_prune = can_use_selective_pruning(pos, node, alpha, beta, in_check);
     let static_eval = if needs_static_eval(depth, can_selectively_prune) {
         evaluator.evaluate(pos)
     } else {
@@ -63,7 +88,14 @@ pub(crate) fn search_node<E: Evaluator>(
     if should_try_razoring(depth, static_eval, alpha, can_selectively_prune) {
         let margin = razor_margin(depth);
         let window_alpha = alpha - margin;
-        let score = qsearch(pos, ply, window_alpha, window_alpha + 1, ctx, evaluator)?;
+        let score = qsearch(
+            pos,
+            node.ply,
+            window_alpha,
+            window_alpha + 1,
+            ctx,
+            evaluator,
+        )?;
         if score < window_alpha {
             return Ok(score);
         }
@@ -73,7 +105,7 @@ pub(crate) fn search_node<E: Evaluator>(
         let score = static_eval - rfp_margin(depth);
         ctx.tt.store(
             hash,
-            ply,
+            node.ply,
             Move::NULL,
             score,
             NO_STATIC_EVAL,
@@ -89,7 +121,7 @@ pub(crate) fn search_node<E: Evaluator>(
         let score = match search_node(
             pos,
             depth - 1 - NULL_MOVE_REDUCTION,
-            ply + 1,
+            node.child(false, -beta, -beta + 1),
             -beta,
             -beta + 1,
             ctx,
@@ -108,7 +140,7 @@ pub(crate) fn search_node<E: Evaluator>(
         if score >= beta {
             ctx.tt.store(
                 hash,
-                ply,
+                node.ply,
                 Move::NULL,
                 beta,
                 NO_STATIC_EVAL,
@@ -133,10 +165,14 @@ pub(crate) fn search_node<E: Evaluator>(
 
     while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
         saw_legal_move = true;
+        let quiet = is_quiet_move(mv);
+        let maybe_check = quiet && might_give_check(pos, mv);
+
         if should_prune_futility(
-            pos,
             mv,
             tt_move,
+            quiet,
+            maybe_check,
             depth,
             alpha,
             static_eval,
@@ -150,9 +186,10 @@ pub(crate) fn search_node<E: Evaluator>(
         }
 
         if should_prune_late_quiet(
-            pos,
             mv,
             tt_move,
+            quiet,
+            maybe_check,
             depth,
             searched_moves,
             can_selectively_prune,
@@ -165,7 +202,7 @@ pub(crate) fn search_node<E: Evaluator>(
         let score = match search_child(
             pos,
             depth - 1,
-            ply + 1,
+            node,
             alpha,
             beta,
             searched_moves >= PVS_FULL_WINDOW_MOVES,
@@ -189,11 +226,18 @@ pub(crate) fn search_node<E: Evaluator>(
         }
 
         if score >= beta {
-            if is_quiet_move(mv) {
+            if quiet {
                 ctx.history.reward_quiet_cutoff(side, mv, depth);
             }
-            ctx.tt
-                .store(hash, ply, mv, score, NO_STATIC_EVAL, depth, Bound::Lower);
+            ctx.tt.store(
+                hash,
+                node.ply,
+                mv,
+                score,
+                NO_STATIC_EVAL,
+                depth,
+                Bound::Lower,
+            );
             return Ok(score);
         }
 
@@ -203,10 +247,10 @@ pub(crate) fn search_node<E: Evaluator>(
     }
 
     if !saw_legal_move {
-        let score = if in_check { -mate_score(ply) } else { 0 };
+        let score = if in_check { -mate_score(node.ply) } else { 0 };
         ctx.tt.store(
             hash,
-            ply,
+            node.ply,
             Move::NULL,
             score,
             NO_STATIC_EVAL,
@@ -223,7 +267,7 @@ pub(crate) fn search_node<E: Evaluator>(
     };
     ctx.tt.store(
         hash,
-        ply,
+        node.ply,
         best_move,
         best_score,
         NO_STATIC_EVAL,
@@ -235,8 +279,14 @@ pub(crate) fn search_node<E: Evaluator>(
 }
 
 #[inline(always)]
-fn can_use_selective_pruning(pos: &Position, alpha: i32, beta: i32, in_check: bool) -> bool {
-    beta == alpha + 1
+fn can_use_selective_pruning(
+    pos: &Position,
+    node: NodeState,
+    alpha: i32,
+    beta: i32,
+    in_check: bool,
+) -> bool {
+    node.cut_node
         && !in_check
         && !is_mate_score(alpha)
         && !is_mate_score(beta)
@@ -309,9 +359,10 @@ fn should_try_null_move(
 
 #[inline(always)]
 fn should_prune_futility(
-    pos: &Position,
     mv: Move,
     tt_move: Move,
+    quiet: bool,
+    maybe_check: bool,
     depth: u8,
     alpha: i32,
     static_eval: i32,
@@ -320,16 +371,17 @@ fn should_prune_futility(
     can_selectively_prune
         && depth <= FUTILITY_MAX_DEPTH
         && mv != tt_move
-        && is_quiet_move(mv)
+        && quiet
         && static_eval + futility_margin(depth) <= alpha
-        && !might_give_check(pos, mv)
+        && !maybe_check
 }
 
 #[inline(always)]
 fn should_prune_late_quiet(
-    pos: &Position,
     mv: Move,
     tt_move: Move,
+    quiet: bool,
+    maybe_check: bool,
     depth: u8,
     searched_moves: usize,
     can_selectively_prune: bool,
@@ -339,8 +391,8 @@ fn should_prune_late_quiet(
         && depth <= LATE_QUIET_PRUNE_MAX_DEPTH
         && searched_moves >= late_quiet_prune_moves(depth)
         && mv != tt_move
-        && is_quiet_move(mv)
-        && !might_give_check(pos, mv)
+        && quiet
+        && !maybe_check
 }
 
 #[inline(always)]
@@ -374,7 +426,7 @@ fn has_non_pawn_material(pos: &Position) -> bool {
 fn search_child<E: Evaluator>(
     pos: &mut Position,
     depth: u8,
-    ply: u8,
+    node: NodeState,
     alpha: i32,
     beta: i32,
     try_null_window: bool,
@@ -382,14 +434,28 @@ fn search_child<E: Evaluator>(
     evaluator: &mut E,
 ) -> Result<i32, SearchInterrupted> {
     if try_null_window {
-        let score = -search_node(pos, depth, ply, -alpha - 1, -alpha, ctx, evaluator)?;
+        let score = -search_node(
+            pos,
+            depth,
+            node.child(false, -alpha - 1, -alpha),
+            -alpha - 1,
+            -alpha,
+            ctx,
+            evaluator,
+        )?;
         if score <= alpha || score >= beta {
             return Ok(score);
         }
     }
 
     Ok(-search_node(
-        pos, depth, ply, -beta, -alpha, ctx, evaluator,
+        pos,
+        depth,
+        node.child(node.pv_node, -beta, -alpha),
+        -beta,
+        -alpha,
+        ctx,
+        evaluator,
     )?)
 }
 

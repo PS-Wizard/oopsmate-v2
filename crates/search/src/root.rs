@@ -3,15 +3,15 @@ use std::sync::atomic::AtomicBool;
 use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::SearchMemory;
-use oopsmate_movegen::{MAX_MOVES, MoveList, analyze, generate_all_with_analysis};
+use oopsmate_movegen::{analyze, generate_all_with_analysis, MoveList, MAX_MOVES};
 
-use crate::alphabeta::search_node;
+use crate::alphabeta::{search_node, NodeState};
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
 use crate::tune::{
     ASPIRATION_MAX_WINDOW, ASPIRATION_MIN_DEPTH, ASPIRATION_WINDOW, MAX_SEARCH_DEPTH,
 };
-use crate::types::{SearchResult, is_mate_score, mate_score};
+use crate::types::{is_mate_score, mate_score, SearchResult};
 
 const ROOT_SCORE_UNSEARCHED: i32 = i32::MIN;
 
@@ -224,7 +224,8 @@ fn search_root<E: Evaluator>(
         let mv = root_moves.as_slice()[index];
         evaluator.push_move(pos, mv);
         pos.make_move(mv);
-        let score = match search_node(pos, depth - 1, 1, -beta, -alpha, ctx, evaluator) {
+        let child = NodeState::new(1, beta > alpha + 1, -beta, -alpha);
+        let score = match search_node(pos, depth - 1, child, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(mv);

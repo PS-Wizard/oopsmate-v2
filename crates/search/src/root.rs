@@ -8,8 +8,10 @@ use oopsmate_movegen::{MAX_MOVES, MoveList, analyze, generate_all_with_analysis}
 use crate::alphabeta::search_node;
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
-use crate::tune::MAX_SEARCH_DEPTH;
-use crate::types::{SearchResult, mate_score};
+use crate::tune::{
+    ASPIRATION_MAX_WINDOW, ASPIRATION_MIN_DEPTH, ASPIRATION_WINDOW, MAX_SEARCH_DEPTH,
+};
+use crate::types::{SearchResult, is_mate_score, mate_score};
 
 const ROOT_SCORE_UNSEARCHED: i32 = i32::MIN;
 
@@ -89,12 +91,13 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
 
     // Iterative Deepening Loop
     for depth in 1..=max_depth {
-        order_root_moves(&mut root_moves, &mut root_scores);
-        match search_root(
+        match search_root_aspirated(
             &mut pos,
             &mut root_moves,
             &mut root_scores,
             depth,
+            best.score,
+            best.depth != 0,
             &mut ctx,
             evaluator,
         ) {
@@ -121,17 +124,88 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
     best
 }
 
+fn search_root_aspirated<E: Evaluator>(
+    pos: &mut Position,
+    root_moves: &mut MoveList,
+    root_scores: &mut [i32; MAX_MOVES],
+    depth: u8,
+    previous_score: i32,
+    has_previous_score: bool,
+    ctx: &mut SearchContext<'_>,
+    evaluator: &mut E,
+) -> Result<(Move, i32), SearchInterrupted> {
+    if !use_aspiration(depth, previous_score, has_previous_score) {
+        order_root_moves(root_moves, root_scores);
+        return search_root(
+            pos,
+            root_moves,
+            root_scores,
+            depth,
+            alpha_min(),
+            beta_max(),
+            ctx,
+            evaluator,
+        );
+    }
+
+    let mut delta = ASPIRATION_WINDOW;
+    let mut alpha = previous_score.saturating_sub(delta).max(alpha_min());
+    let mut beta = previous_score.saturating_add(delta).min(beta_max());
+
+    loop {
+        order_root_moves(root_moves, root_scores);
+        let (best_move, score) =
+            search_root(pos, root_moves, root_scores, depth, alpha, beta, ctx, evaluator)?;
+        if score <= alpha {
+            delta = next_aspiration_delta(delta);
+            if delta > ASPIRATION_MAX_WINDOW {
+                order_root_moves(root_moves, root_scores);
+                return search_root(
+                    pos,
+                    root_moves,
+                    root_scores,
+                    depth,
+                    alpha_min(),
+                    beta_max(),
+                    ctx,
+                    evaluator,
+                );
+            }
+            alpha = score.saturating_sub(delta).max(alpha_min());
+        } else if score >= beta {
+            delta = next_aspiration_delta(delta);
+            if delta > ASPIRATION_MAX_WINDOW {
+                order_root_moves(root_moves, root_scores);
+                return search_root(
+                    pos,
+                    root_moves,
+                    root_scores,
+                    depth,
+                    alpha_min(),
+                    beta_max(),
+                    ctx,
+                    evaluator,
+                );
+            }
+            beta = score.saturating_add(delta).min(beta_max());
+        } else {
+            return Ok((best_move, score));
+        }
+    }
+}
+
 fn search_root<E: Evaluator>(
     pos: &mut Position,
     root_moves: &mut MoveList,
     root_scores: &mut [i32; MAX_MOVES],
     depth: u8,
+    mut alpha: i32,
+    beta: i32,
     ctx: &mut SearchContext<'_>,
     evaluator: &mut E,
 ) -> Result<(Move, i32), SearchInterrupted> {
     let mut best_move = Move::NULL;
-    let mut alpha = i32::MIN / 2;
-    let beta = i32::MAX / 2;
+    let mut best_score = i32::MIN / 2;
     let move_count = root_moves.len();
 
     for index in 0..move_count {
@@ -154,14 +228,46 @@ fn search_root<E: Evaluator>(
         evaluator.pop_move();
         root_scores[index] = score;
 
+        if score > best_score {
+            best_score = score;
+            best_move = mv;
+        }
+
+        if score >= beta {
+            return Ok((mv, score));
+        }
+
         if score > alpha {
             alpha = score;
-            best_move = mv;
         }
     }
 
     debug_assert!(move_count != 0, "root search called without legal moves");
-    Ok((best_move, alpha))
+    Ok((best_move, best_score))
+}
+
+#[inline(always)]
+const fn alpha_min() -> i32 {
+    i32::MIN / 2
+}
+
+#[inline(always)]
+const fn beta_max() -> i32 {
+    i32::MAX / 2
+}
+
+#[inline(always)]
+fn use_aspiration(depth: u8, previous_score: i32, has_previous_score: bool) -> bool {
+    has_previous_score
+        && depth >= ASPIRATION_MIN_DEPTH
+        && ASPIRATION_WINDOW > 0
+        && ASPIRATION_MAX_WINDOW >= ASPIRATION_WINDOW
+        && !is_mate_score(previous_score)
+}
+
+#[inline(always)]
+fn next_aspiration_delta(delta: i32) -> i32 {
+    delta.saturating_mul(2)
 }
 
 fn order_root_moves(root_moves: &mut MoveList, root_scores: &mut [i32; MAX_MOVES]) {

@@ -3,6 +3,9 @@ use std::{env, fs, path::PathBuf};
 const DEFAULTS: &[(&str, &str, &str)] = &[
     ("MAX_SEARCH_DEPTH", "u8", "64"),
     ("PVS_FULL_WINDOW_MOVES", "usize", "2"),
+    ("ASPIRATION_MIN_DEPTH", "u8", "5"),
+    ("ASPIRATION_WINDOW", "i32", "150"),
+    ("ASPIRATION_MAX_WINDOW", "i32", "1000"),
     ("MOVE_PICKER_CAPTURE_BASE", "i32", "10000"),
     ("MOVE_PICKER_PROMOTION_BASE", "i32", "20000"),
     ("QSEARCH_DELTA_MARGIN", "i32", "200"),

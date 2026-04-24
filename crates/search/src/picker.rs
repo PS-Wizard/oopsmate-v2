@@ -1,6 +1,7 @@
 use std::mem::MaybeUninit;
 
-use oopsmate_core::{Move, MoveKind, Piece, Position};
+use oopsmate_core::{Color, Move, MoveKind, Piece, Position};
+use oopsmate_memory::HistoryTable;
 use oopsmate_movegen::{
     Analysis, MAX_MOVES, MoveList, generate_captures_promotions_with_analysis,
     generate_evasions_with_analysis, generate_quiets_with_analysis,
@@ -23,6 +24,7 @@ enum Phase {
 
 pub(crate) struct MovePicker {
     phase: Phase,
+    side: Color,
     tt_move: Move,
     tt_mode: TtMode,
     tt_yielded: bool,
@@ -35,7 +37,7 @@ pub(crate) struct MovePicker {
 
 impl MovePicker {
     #[must_use]
-    pub(crate) fn new(_pos: &Position, analysis: &Analysis, tt_move: Move, tt_mode: TtMode) -> Self {
+    pub(crate) fn new(pos: &Position, analysis: &Analysis, tt_move: Move, tt_mode: TtMode) -> Self {
         let tt_move = match tt_mode {
             TtMode::ValidateInStage | TtMode::BlindTrust
                 if tt_move != Move::NULL && !has_valid_kind(tt_move) =>
@@ -47,6 +49,7 @@ impl MovePicker {
 
         Self {
             phase: Phase::Tt,
+            side: pos.side_to_move(),
             tt_move,
             tt_mode,
             tt_yielded: false,
@@ -58,19 +61,24 @@ impl MovePicker {
         }
     }
 
-    pub(crate) fn next_move(&mut self, pos: &Position, analysis: &Analysis) -> Option<Move> {
+    pub(crate) fn next_move(
+        &mut self,
+        pos: &Position,
+        analysis: &Analysis,
+        history: &HistoryTable,
+    ) -> Option<Move> {
         loop {
             match self.phase {
                 Phase::Tt => {
                     self.phase = self.first_generated_phase();
-                    if let Some(mv) = self.try_tt_move(pos, analysis) {
+                    if let Some(mv) = self.try_tt_move(pos, analysis, history) {
                         self.tt_yielded = true;
                         return Some(mv);
                     }
                 }
                 Phase::Captures | Phase::Quiets | Phase::Evasions => {
                     if !self.stage_loaded {
-                        self.load_stage(pos, analysis);
+                        self.load_stage(pos, analysis, history);
                     }
 
                     if let Some(mv) = self.pick_best() {
@@ -93,7 +101,12 @@ impl MovePicker {
         }
     }
 
-    fn try_tt_move(&mut self, pos: &Position, analysis: &Analysis) -> Option<Move> {
+    fn try_tt_move(
+        &mut self,
+        pos: &Position,
+        analysis: &Analysis,
+        history: &HistoryTable,
+    ) -> Option<Move> {
         if self.tt_move == Move::NULL {
             return None;
         }
@@ -111,7 +124,7 @@ impl MovePicker {
 
                 if validation_phase == self.phase {
                     if !self.stage_loaded {
-                        self.load_stage(pos, analysis);
+                        self.load_stage(pos, analysis, history);
                     }
                     self.moves.contains(self.tt_move).then_some(self.tt_move)
                 } else {
@@ -123,7 +136,7 @@ impl MovePicker {
         }
     }
 
-    fn load_stage(&mut self, pos: &Position, analysis: &Analysis) {
+    fn load_stage(&mut self, pos: &Position, analysis: &Analysis, history: &HistoryTable) {
         self.moves.clear();
         match self.phase {
             Phase::Captures => {
@@ -139,7 +152,12 @@ impl MovePicker {
 
         for index in 0..self.moves.len() {
             let mv = self.moves.as_slice()[index];
-            self.write_score(index, score_move(pos, mv));
+            let score = match self.phase {
+                Phase::Quiets => history.score(self.side, mv),
+                Phase::Captures | Phase::Evasions => score_move(pos, mv),
+                Phase::Tt | Phase::Done => unreachable!(),
+            };
+            self.write_score(index, score);
         }
     }
 
@@ -180,8 +198,6 @@ impl MovePicker {
     #[inline(always)]
     fn write_score(&mut self, index: usize, score: i16) {
         debug_assert!(index < MAX_MOVES);
-        // SAFETY: load_stage writes exactly the initialized score prefix matching
-        // self.moves. pick_best only reads/swaps indices inside that prefix.
         unsafe {
             (self.scores.as_mut_ptr() as *mut i16)
                 .add(index)
@@ -192,7 +208,6 @@ impl MovePicker {
     #[inline(always)]
     fn score(&self, index: usize) -> i16 {
         debug_assert!(index < self.moves.len());
-        // SAFETY: index is inside the initialized prefix written by load_stage.
         unsafe { *((self.scores.as_ptr() as *const i16).add(index)) }
     }
 
@@ -204,7 +219,6 @@ impl MovePicker {
             return;
         }
 
-        // SAFETY: both indices are inside the initialized prefix written by load_stage.
         unsafe {
             std::ptr::swap(
                 (self.scores.as_mut_ptr() as *mut i16).add(a),
@@ -273,9 +287,10 @@ mod tests {
         let pos = Position::from_fen("4k3/8/8/2n5/3P4/8/8/4K3 w - - 0 1").unwrap();
         let analysis = analyze(&pos);
         let tt_move = Move::new(sq("d4"), sq("d5"), MoveKind::Quiet);
+        let history = HistoryTable::new();
         let mut picker = MovePicker::new(&pos, &analysis, tt_move, TtMode::ValidateInStage);
 
-        assert_eq!(picker.next_move(&pos, &analysis), Some(tt_move));
+        assert_eq!(picker.next_move(&pos, &analysis, &history), Some(tt_move));
     }
 
     #[test]
@@ -283,9 +298,10 @@ mod tests {
         let pos = Position::from_fen("4k3/8/8/2n5/3P4/8/8/4K3 w - - 0 1").unwrap();
         let analysis = analyze(&pos);
         let bogus = Move::new(sq("a1"), sq("a2"), MoveKind::Quiet);
+        let history = HistoryTable::new();
         let mut picker = MovePicker::new(&pos, &analysis, bogus, TtMode::ValidateInStage);
 
-        assert_ne!(picker.next_move(&pos, &analysis), Some(bogus));
+        assert_ne!(picker.next_move(&pos, &analysis, &history), Some(bogus));
     }
 
     #[test]
@@ -293,9 +309,10 @@ mod tests {
         let pos = Position::from_fen("4k3/8/8/2n5/3P4/8/8/4K3 w - - 0 1").unwrap();
         let analysis = analyze(&pos);
         let bogus = Move((sq("a1").raw() as u16) | ((sq("a2").raw() as u16) << 6) | (5 << 12));
+        let history = HistoryTable::new();
         let mut picker = MovePicker::new(&pos, &analysis, bogus, TtMode::BlindTrust);
 
-        assert_ne!(picker.next_move(&pos, &analysis), Some(bogus));
+        assert_ne!(picker.next_move(&pos, &analysis, &history), Some(bogus));
     }
 
     #[test]
@@ -303,15 +320,28 @@ mod tests {
         let pos = Position::from_fen("4k3/8/8/2n5/3P4/8/8/4K3 w - - 0 1").unwrap();
         let analysis = analyze(&pos);
         let tt_move = Move::new(sq("d4"), sq("c5"), MoveKind::Capture);
+        let history = HistoryTable::new();
         let mut picker = MovePicker::new(&pos, &analysis, tt_move, TtMode::ValidateInStage);
         let mut seen = 0;
 
-        while let Some(mv) = picker.next_move(&pos, &analysis) {
+        while let Some(mv) = picker.next_move(&pos, &analysis, &history) {
             if mv == tt_move {
                 seen += 1;
             }
         }
 
         assert_eq!(seen, 1);
+    }
+
+    #[test]
+    fn quiet_stage_uses_history_scores() {
+        let pos = Position::from_fen("4k3/8/8/8/3N4/8/8/4K3 w - - 0 1").unwrap();
+        let analysis = analyze(&pos);
+        let quiet = Move::new(sq("d4"), sq("f5"), MoveKind::Quiet);
+        let mut history = HistoryTable::new();
+        history.reward_quiet_cutoff(Color::White, quiet, 8);
+        let mut picker = MovePicker::new(&pos, &analysis, Move::NULL, TtMode::BlindTrust);
+
+        assert_eq!(picker.next_move(&pos, &analysis, &history), Some(quiet));
     }
 }

@@ -1,4 +1,4 @@
-use oopsmate_core::{Move, Position};
+use oopsmate_core::{Move, MoveKind, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
 use oopsmate_movegen::analyze;
@@ -49,12 +49,13 @@ pub(crate) fn search_node<E: Evaluator>(
     } else {
         TtMode::BlindTrust
     };
+    let side = pos.side_to_move();
     let mut picker = MovePicker::new(pos, &analysis, tt_move, tt_mode);
     let mut best_move = Move::NULL;
     let mut best_score = i32::MIN / 2;
     let mut saw_legal_move = false;
 
-    while let Some(mv) = picker.next_move(pos, &analysis) {
+    while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
         saw_legal_move = true;
         pos.make_move(mv);
         let score = match search_node(pos, depth - 1, ply + 1, -beta, -alpha, ctx, evaluator) {
@@ -72,6 +73,9 @@ pub(crate) fn search_node<E: Evaluator>(
         }
 
         if score >= beta {
+            if is_quiet_move(mv) {
+                ctx.history.reward_quiet_cutoff(side, mv, depth);
+            }
             ctx.tt
                 .store(hash, ply, mv, score, NO_STATIC_EVAL, depth, Bound::Lower);
             return Ok(score);
@@ -116,4 +120,9 @@ pub(crate) fn search_node<E: Evaluator>(
     );
 
     Ok(best_score)
+}
+
+#[inline(always)]
+const fn is_quiet_move(mv: Move) -> bool {
+    matches!(mv.kind(), MoveKind::Quiet | MoveKind::DoublePush | MoveKind::Castle)
 }

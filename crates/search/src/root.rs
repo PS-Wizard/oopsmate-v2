@@ -35,7 +35,13 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
 
     let max_depth = limits.depth.unwrap_or(MAX_SEARCH_DEPTH);
     let mut pos = position.clone();
-    let mut ctx = SearchContext::new(stop, limits, pos.side_to_move(), &mut memory.tt);
+    let mut ctx = SearchContext::new(
+        stop,
+        limits,
+        pos.side_to_move(),
+        &mut memory.tt,
+        &mut memory.history,
+    );
 
     // Root still pre-generates once here only to detect terminal root positions and keep a
     // fallback legal move if the search is stopped before depth 1 finishes.
@@ -119,7 +125,7 @@ fn search_root<E: Evaluator>(
     let beta = i32::MAX / 2;
     let mut saw_move = false;
 
-    while let Some(mv) = picker.next_move(pos, &analysis) {
+    while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
         saw_move = true;
         if ctx.should_stop_now() {
             return Err(SearchInterrupted);

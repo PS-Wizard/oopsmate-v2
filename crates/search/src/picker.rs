@@ -3,11 +3,13 @@ use std::mem::MaybeUninit;
 use oopsmate_core::{Color, Move, MoveKind, Piece, Position};
 use oopsmate_memory::HistoryTable;
 use oopsmate_movegen::{
-    Analysis, MAX_MOVES, MoveList, generate_captures_promotions_with_analysis,
-    generate_evasions_with_analysis, generate_quiets_with_analysis,
+    generate_captures_promotions_with_analysis, generate_evasions_with_analysis,
+    generate_quiets_with_analysis, see_ge, Analysis, MoveList, MAX_MOVES,
 };
 
-use crate::tune::{MOVE_PICKER_CAPTURE_BASE, MOVE_PICKER_PROMOTION_BASE};
+use crate::tune::{
+    MOVE_PICKER_BAD_CAPTURE_BASE, MOVE_PICKER_CAPTURE_BASE, MOVE_PICKER_PROMOTION_BASE,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TtMode {
@@ -231,6 +233,7 @@ impl MovePicker {
 }
 
 const PIECE_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 0];
+const CAPTURE_VICTIM_SCALE: i32 = 8;
 
 #[inline(always)]
 fn score_move(pos: &Position, mv: Move) -> i16 {
@@ -239,26 +242,48 @@ fn score_move(pos: &Position, mv: Move) -> i16 {
 
     if kind.is_promotion() {
         let promoted = kind.promotion_piece().expect("promotion piece");
-        score += MOVE_PICKER_PROMOTION_BASE + PIECE_VALUES[promoted.index()];
+        let captured = if kind.is_capture() {
+            PIECE_VALUES[captured_piece(pos, mv).index()]
+        } else {
+            0
+        };
+        score += MOVE_PICKER_PROMOTION_BASE + PIECE_VALUES[promoted.index()] + captured;
+        debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
+        return score as i16;
     }
 
     if kind.is_capture() || kind == MoveKind::EnPassant {
         let attacker = pos
             .piece_at(mv.from())
             .map_or(Piece::Pawn, |(piece, _)| piece);
-        let captured = if kind == MoveKind::EnPassant {
-            Piece::Pawn
+        let captured = captured_piece(pos, mv);
+        let base = if is_good_capture(pos, mv) {
+            MOVE_PICKER_CAPTURE_BASE
         } else {
-            pos.piece_at(mv.to())
-                .map_or(Piece::Pawn, |(piece, _)| piece)
+            MOVE_PICKER_BAD_CAPTURE_BASE
         };
 
-        score += MOVE_PICKER_CAPTURE_BASE + PIECE_VALUES[captured.index()] * 16
+        score += base + PIECE_VALUES[captured.index()] * CAPTURE_VICTIM_SCALE
             - PIECE_VALUES[attacker.index()];
     }
 
     debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
     score as i16
+}
+
+#[inline(always)]
+fn captured_piece(pos: &Position, mv: Move) -> Piece {
+    if mv.kind() == MoveKind::EnPassant {
+        Piece::Pawn
+    } else {
+        pos.piece_at(mv.to())
+            .map_or(Piece::Pawn, |(piece, _)| piece)
+    }
+}
+
+#[inline(always)]
+fn is_good_capture(pos: &Position, mv: Move) -> bool {
+    mv.kind() == MoveKind::EnPassant || see_ge(pos, mv, 0)
 }
 
 #[inline(always)]
@@ -343,5 +368,18 @@ mod tests {
         let mut picker = MovePicker::new(&pos, &analysis, Move::NULL, TtMode::BlindTrust);
 
         assert_eq!(picker.next_move(&pos, &analysis, &history), Some(quiet));
+    }
+
+    #[test]
+    fn winning_capture_stays_before_quiets() {
+        let pos = Position::from_fen("4k3/8/8/3q4/4P3/8/8/4K3 w - - 0 1").unwrap();
+        let analysis = analyze(&pos);
+        let capture = Move::new(sq("e4"), sq("d5"), MoveKind::Capture);
+        let quiet = Move::new(sq("e1"), sq("d1"), MoveKind::Quiet);
+        let mut history = HistoryTable::new();
+        history.reward_quiet_cutoff(Color::White, quiet, 8);
+        let mut picker = MovePicker::new(&pos, &analysis, Move::NULL, TtMode::BlindTrust);
+
+        assert_eq!(picker.next_move(&pos, &analysis, &history), Some(capture));
     }
 }

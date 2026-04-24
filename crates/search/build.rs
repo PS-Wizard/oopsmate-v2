@@ -29,6 +29,7 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ("FUTILITY_MARGIN_6", "i32", "540"),
     ("FUTILITY_MARGIN_7", "i32", "630"),
     ("MOVE_PICKER_CAPTURE_BASE", "i32", "10000"),
+    ("MOVE_PICKER_BAD_CAPTURE_BASE", "i32", "0"),
     ("MOVE_PICKER_PROMOTION_BASE", "i32", "20000"),
     ("QSEARCH_DELTA_MARGIN", "i32", "200"),
     ("QSEARCH_CAPTURE_BASE", "i32", "10000"),

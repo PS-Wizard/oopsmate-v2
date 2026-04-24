@@ -18,7 +18,7 @@ pub fn search<E: Evaluator>(
     limits: SearchLimits,
     stop: &AtomicBool,
     memory: &mut SearchMemory,
-    evaluator: &E,
+    evaluator: &mut E,
 ) -> SearchResult {
     search_with_reporter(position, limits, stop, memory, evaluator, |_| {})
 }
@@ -28,13 +28,14 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
     limits: SearchLimits,
     stop: &AtomicBool,
     memory: &mut SearchMemory,
-    evaluator: &E,
+    evaluator: &mut E,
     mut report: F,
 ) -> SearchResult {
     memory.new_search();
 
     let max_depth = limits.depth.unwrap_or(MAX_SEARCH_DEPTH);
     let mut pos = position.clone();
+    evaluator.reset(&pos);
     let mut ctx = SearchContext::new(
         stop,
         limits,
@@ -112,7 +113,7 @@ fn search_root<E: Evaluator>(
     pos: &mut Position,
     depth: u8,
     ctx: &mut SearchContext<'_>,
-    evaluator: &E,
+    evaluator: &mut E,
 ) -> Result<(Move, i32), SearchInterrupted> {
     let analysis = analyze(pos);
     let tt_move = ctx
@@ -131,15 +132,18 @@ fn search_root<E: Evaluator>(
             return Err(SearchInterrupted);
         }
 
+        evaluator.push_move(pos, mv);
         pos.make_move(mv);
         let score = match search_node(pos, depth - 1, 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(mv);
+                evaluator.pop_move();
                 return Err(err);
             }
         };
         pos.unmake_move(mv);
+        evaluator.pop_move();
 
         if score > alpha {
             alpha = score;

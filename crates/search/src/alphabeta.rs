@@ -15,7 +15,7 @@ pub(crate) fn search_node<E: Evaluator>(
     mut alpha: i32,
     beta: i32,
     ctx: &mut SearchContext<'_>,
-    evaluator: &E,
+    evaluator: &mut E,
 ) -> Result<i32, SearchInterrupted> {
     if depth == 0 {
         return qsearch(pos, ply, alpha, beta, ctx, evaluator);
@@ -57,15 +57,18 @@ pub(crate) fn search_node<E: Evaluator>(
 
     while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
         saw_legal_move = true;
+        evaluator.push_move(pos, mv);
         pos.make_move(mv);
         let score = match search_node(pos, depth - 1, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(mv);
+                evaluator.pop_move();
                 return Err(err);
             }
         };
         pos.unmake_move(mv);
+        evaluator.pop_move();
 
         if score > best_score {
             best_score = score;

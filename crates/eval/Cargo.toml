@@ -12,3 +12,4 @@ path = "src/lib.rs"
 
 [dependencies]
 oopsmate-core = { path = "../core" }
+nnuebie_v2 = { path = "../nnuebie_v2" }

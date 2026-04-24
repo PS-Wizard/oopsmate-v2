@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use oopsmate_core::{Move, Piece, Position};
-use oopsmate_eval::PestoEval;
+use oopsmate_eval::NnueEval;
 use oopsmate_memory::SearchMemory;
 use oopsmate_movegen::{generate_all, MoveList};
 use oopsmate_search::{mate_in, search_with_reporter, ClockLimits, SearchLimits, SearchResult};
@@ -15,7 +15,7 @@ const DEFAULT_TT_MIB: usize = 64;
 pub fn run() {
     let stdin = io::stdin();
     let mut position = Position::startpos();
-    let mut memory = Some(SearchMemory::new(DEFAULT_TT_MIB));
+    let mut state = Some(EngineState::new(DEFAULT_TT_MIB));
     let mut worker = None;
 
     for line in stdin.lock().lines() {
@@ -35,27 +35,27 @@ pub fn run() {
             }
             "isready" => print_line("readyok"),
             "ucinewgame" => {
-                stop_and_join(&mut worker, &mut memory);
-                memory.as_mut().expect("search memory missing").clear();
+                stop_and_join(&mut worker, &mut state);
+                state.as_mut().expect("engine state missing").memory.clear();
                 position = Position::startpos();
             }
             "position" => {
-                stop_and_join(&mut worker, &mut memory);
+                stop_and_join(&mut worker, &mut state);
                 if let Err(err) = set_position(&mut position, &tokens[1..]) {
                     eprintln!("position error: {err}");
                 }
             }
             "go" => {
-                stop_and_join(&mut worker, &mut memory);
+                stop_and_join(&mut worker, &mut state);
                 worker = Some(spawn_search(
                     position.clone(),
                     parse_go(&tokens[1..]),
-                    memory.take().expect("search memory missing"),
+                    state.take().expect("engine state missing"),
                 ));
             }
-            "stop" => stop_and_join(&mut worker, &mut memory),
+            "stop" => stop_and_join(&mut worker, &mut state),
             "quit" => {
-                stop_and_join(&mut worker, &mut memory);
+                stop_and_join(&mut worker, &mut state);
                 break;
             }
             "setoption" | "register" | "ponderhit" | "debug" => {}
@@ -63,18 +63,32 @@ pub fn run() {
         }
     }
 
-    stop_and_join(&mut worker, &mut memory);
+    stop_and_join(&mut worker, &mut state);
+}
+
+struct EngineState {
+    memory: SearchMemory,
+    evaluator: NnueEval,
+}
+
+impl EngineState {
+    fn new(tt_mib: usize) -> Self {
+        Self {
+            memory: SearchMemory::new(tt_mib),
+            evaluator: NnueEval::load_default().expect("load NNUE networks"),
+        }
+    }
 }
 
 struct SearchWorker {
     stop: Arc<AtomicBool>,
-    handle: JoinHandle<SearchMemory>,
+    handle: JoinHandle<EngineState>,
 }
 
 fn spawn_search(
     position: Position,
     limits: SearchLimits,
-    mut memory: SearchMemory,
+    mut state: EngineState,
 ) -> SearchWorker {
     let stop = Arc::new(AtomicBool::new(false));
     let worker_stop = Arc::clone(&stop);
@@ -85,22 +99,22 @@ fn spawn_search(
                 &position,
                 limits,
                 worker_stop.as_ref(),
-                &mut memory,
-                &PestoEval,
+                &mut state.memory,
+                &mut state.evaluator,
                 print_search_info,
             );
             print_search_result(result);
-            memory
+            state
         })
         .expect("failed to spawn search worker");
 
     SearchWorker { stop, handle }
 }
 
-fn stop_and_join(worker: &mut Option<SearchWorker>, memory: &mut Option<SearchMemory>) {
+fn stop_and_join(worker: &mut Option<SearchWorker>, state: &mut Option<EngineState>) {
     if let Some(worker) = worker.take() {
         worker.stop.store(true, Ordering::Relaxed);
-        *memory = Some(worker.handle.join().expect("search worker panicked"));
+        *state = Some(worker.handle.join().expect("search worker panicked"));
     }
 }
 

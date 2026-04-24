@@ -2,7 +2,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use oopsmate_core::{Move, MoveKind, Piece, Position};
-use oopsmate_eval::PestoEval;
+use oopsmate_eval::NnueEval;
 use oopsmate_memory::SearchMemory;
 use oopsmate_movegen::PERFT_CASES;
 use oopsmate_search::{SearchLimits, search};
@@ -27,7 +27,7 @@ fn main() {
         .unwrap_or(DEFAULT_TT_MIB);
 
     let stop = AtomicBool::new(false);
-    let evaluator = PestoEval;
+    let mut evaluator = NnueEval::load_default().expect("load NNUE networks");
     let mut total_nodes = 0u64;
     let mut total_nanos = 0u128;
 
@@ -48,7 +48,7 @@ fn main() {
                 SearchLimits::depth(depth),
                 &stop,
                 &mut memory,
-                &evaluator,
+                &mut evaluator,
             );
             let elapsed = start.elapsed();
             let nanos = elapsed.as_nanos().max(1);

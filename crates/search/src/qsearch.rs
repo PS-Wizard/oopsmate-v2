@@ -17,7 +17,7 @@ pub(crate) fn qsearch<E: Evaluator>(
     mut alpha: i32,
     beta: i32,
     ctx: &mut SearchContext<'_>,
-    evaluator: &E,
+    evaluator: &mut E,
 ) -> Result<i32, SearchInterrupted> {
     ctx.enter_node()?;
 
@@ -81,15 +81,18 @@ pub(crate) fn qsearch<E: Evaluator>(
         && moves.contains(tt_move)
     {
         skip = tt_move;
+        evaluator.push_move(pos, tt_move);
         pos.make_move(tt_move);
         let score = match qsearch(pos, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(tt_move);
+                evaluator.pop_move();
                 return Err(err);
             }
         };
         pos.unmake_move(tt_move);
+        evaluator.pop_move();
 
         if score > best_score {
             best_score = score;
@@ -120,15 +123,18 @@ pub(crate) fn qsearch<E: Evaluator>(
             continue;
         }
 
+        evaluator.push_move(pos, mv);
         pos.make_move(mv);
         let score = match qsearch(pos, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(mv);
+                evaluator.pop_move();
                 return Err(err);
             }
         };
         pos.unmake_move(mv);
+        evaluator.pop_move();
 
         if score > best_score {
             best_score = score;
@@ -179,7 +185,7 @@ fn qsearch_evasions<E: Evaluator>(
     mut alpha: i32,
     beta: i32,
     ctx: &mut SearchContext<'_>,
-    evaluator: &E,
+    evaluator: &mut E,
 ) -> Result<i32, SearchInterrupted> {
     let hash = pos.hash();
     let alpha_orig = alpha;
@@ -207,15 +213,18 @@ fn qsearch_evasions<E: Evaluator>(
 
     if tt_move != Move::NULL && is_valid_encoded_move(tt_move) && moves.contains(tt_move) {
         skip = tt_move;
+        evaluator.push_move(pos, tt_move);
         pos.make_move(tt_move);
         let score = match qsearch(pos, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(tt_move);
+                evaluator.pop_move();
                 return Err(err);
             }
         };
         pos.unmake_move(tt_move);
+        evaluator.pop_move();
 
         best_score = score;
         best_move = tt_move;
@@ -232,15 +241,18 @@ fn qsearch_evasions<E: Evaluator>(
     }
 
     while let Some(mv) = next_qmove(pos, &mut moves, &mut next, skip) {
+        evaluator.push_move(pos, mv);
         pos.make_move(mv);
         let score = match qsearch(pos, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
             Err(err) => {
                 pos.unmake_move(mv);
+                evaluator.pop_move();
                 return Err(err);
             }
         };
         pos.unmake_move(mv);
+        evaluator.pop_move();
 
         if score > best_score {
             best_score = score;

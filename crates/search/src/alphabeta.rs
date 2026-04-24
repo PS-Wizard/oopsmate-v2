@@ -1,12 +1,12 @@
 use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
-use oopsmate_movegen::{generate_all, is_square_attacked, MoveList};
+use oopsmate_movegen::analyze;
 
 use crate::control::{SearchContext, SearchInterrupted};
+use crate::picker::{MovePicker, TtMode};
+use crate::qsearch::{NO_STATIC_EVAL, qsearch};
 use crate::types::mate_score;
-
-const NO_STATIC_EVAL: i16 = i16::MIN;
 
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
@@ -17,6 +17,10 @@ pub(crate) fn search_node<E: Evaluator>(
     ctx: &mut SearchContext<'_>,
     evaluator: &E,
 ) -> Result<i32, SearchInterrupted> {
+    if depth == 0 {
+        return qsearch(pos, ply, alpha, beta, ctx, evaluator);
+    }
+
     ctx.enter_node()?;
 
     if pos.rule50() >= 100 || pos.is_repetition() {
@@ -25,8 +29,10 @@ pub(crate) fn search_node<E: Evaluator>(
 
     let hash = pos.hash();
     let alpha_orig = alpha;
+    let mut tt_move = Move::NULL;
 
     if let Some(hit) = ctx.tt.probe(hash, ply) {
+        tt_move = hit.best_move;
         if hit.depth >= depth {
             match hit.bound {
                 Bound::Exact => return Ok(hit.score),
@@ -37,55 +43,19 @@ pub(crate) fn search_node<E: Evaluator>(
         }
     }
 
-    if depth == 0 && !in_check(pos) {
-        let static_eval = evaluator.evaluate(pos);
-        ctx.tt.store(
-            hash,
-            ply,
-            Move::NULL,
-            static_eval,
-            pack_static_eval(static_eval),
-            depth,
-            Bound::Exact,
-        );
-        return Ok(static_eval);
-    }
-
-    let mut moves = MoveList::new();
-    generate_all(pos, &mut moves);
-
-    if moves.len() == 0 {
-        let score = if in_check(pos) { -mate_score(ply) } else { 0 };
-        ctx.tt.store(
-            hash,
-            ply,
-            Move::NULL,
-            score,
-            NO_STATIC_EVAL,
-            depth,
-            Bound::Exact,
-        );
-        return Ok(score);
-    }
-
-    if depth == 0 {
-        let static_eval = evaluator.evaluate(pos);
-        ctx.tt.store(
-            hash,
-            ply,
-            Move::NULL,
-            static_eval,
-            pack_static_eval(static_eval),
-            depth,
-            Bound::Exact,
-        );
-        return Ok(static_eval);
-    }
-
+    let analysis = analyze(pos);
+    let tt_mode = if analysis.in_check() {
+        TtMode::ValidateInStage
+    } else {
+        TtMode::PseudoLegal
+    };
+    let mut picker = MovePicker::new(pos, &analysis, tt_move, tt_mode);
     let mut best_move = Move::NULL;
     let mut best_score = i32::MIN / 2;
+    let mut saw_legal_move = false;
 
-    for &mv in moves.as_slice() {
+    while let Some(mv) = picker.next_move(pos, &analysis) {
+        saw_legal_move = true;
         pos.make_move(mv);
         let score = match search_node(pos, depth - 1, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
@@ -112,6 +82,24 @@ pub(crate) fn search_node<E: Evaluator>(
         }
     }
 
+    if !saw_legal_move {
+        let score = if analysis.in_check() {
+            -mate_score(ply)
+        } else {
+            0
+        };
+        ctx.tt.store(
+            hash,
+            ply,
+            Move::NULL,
+            score,
+            NO_STATIC_EVAL,
+            depth,
+            Bound::Exact,
+        );
+        return Ok(score);
+    }
+
     let bound = if best_score <= alpha_orig {
         Bound::Upper
     } else {
@@ -128,19 +116,4 @@ pub(crate) fn search_node<E: Evaluator>(
     );
 
     Ok(best_score)
-}
-
-#[inline(always)]
-#[must_use]
-pub(crate) fn in_check(pos: &Position) -> bool {
-    let us = pos.side_to_move();
-    let king_sq = pos.board().king_square(us);
-    is_square_attacked(pos, king_sq, us.flip())
-}
-
-#[inline(always)]
-#[must_use]
-fn pack_static_eval(score: i32) -> i16 {
-    debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
-    score as i16
 }

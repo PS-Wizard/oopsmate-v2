@@ -62,6 +62,23 @@ impl MoveList {
     }
 
     #[inline(always)]
+    pub fn swap(&mut self, a: usize, b: usize) {
+        debug_assert!(a < self.len);
+        debug_assert!(b < self.len);
+        if a == b {
+            return;
+        }
+
+        // SAFETY: both indices are within the initialized prefix [0..len).
+        unsafe {
+            std::ptr::swap(
+                (self.moves.as_mut_ptr() as *mut Move).add(a),
+                (self.moves.as_mut_ptr() as *mut Move).add(b),
+            );
+        }
+    }
+
+    #[inline(always)]
     #[must_use]
     pub fn contains(&self, mv: Move) -> bool {
         self.as_slice().contains(&mv)

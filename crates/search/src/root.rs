@@ -3,12 +3,13 @@ use std::sync::atomic::AtomicBool;
 use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::SearchMemory;
-use oopsmate_movegen::{generate_all, MoveList};
+use oopsmate_movegen::{MoveList, analyze, generate_all_with_analysis};
 
-use crate::alphabeta::{in_check, search_node};
+use crate::alphabeta::search_node;
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
-use crate::types::{mate_score, SearchResult};
+use crate::picker::{MovePicker, TtMode};
+use crate::types::{SearchResult, mate_score};
 
 const MAX_SEARCH_DEPTH: u8 = 64;
 
@@ -36,19 +37,22 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
     let mut pos = position.clone();
     let mut ctx = SearchContext::new(stop, limits, pos.side_to_move(), &mut memory.tt);
 
-    // TODO
-    // Currently we generate the moves once, and in the iterative deepening loop we use the same
-    // moves, no reordering the best moves from the previous iteration. Root level move ordering
-    // should be looked into next.
+    // Root still pre-generates once here only to detect terminal root positions and keep a
+    // fallback legal move if the search is stopped before depth 1 finishes.
+    let root_analysis = analyze(&pos);
     let mut root_moves = MoveList::new();
-    generate_all(&pos, &mut root_moves);
+    generate_all_with_analysis(&pos, &root_analysis, &mut root_moves);
 
     // No moves -> current side in check -> checkmate -> loosing mate score
     // No moves -> current side in NOT in check -> stalemate
-    if root_moves.len() == 0 {
+    if root_moves.is_empty() {
         return SearchResult {
             best_move: None,
-            score: if in_check(&pos) { -mate_score(0) } else { 0 },
+            score: if root_analysis.in_check() {
+                -mate_score(0)
+            } else {
+                0
+            },
             depth: 0,
             nodes: 0,
             time_ms: ctx.elapsed_ms(),
@@ -74,7 +78,7 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
 
     // Iterative Deepening Loop
     for depth in 1..=max_depth {
-        match search_root(&mut pos, root_moves.as_slice(), depth, &mut ctx, evaluator) {
+        match search_root(&mut pos, depth, &mut ctx, evaluator) {
             Ok((best_move, score)) => {
                 best.best_move = Some(best_move);
                 best.score = score;
@@ -100,16 +104,23 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
 
 fn search_root<E: Evaluator>(
     pos: &mut Position,
-    moves: &[Move],
     depth: u8,
     ctx: &mut SearchContext<'_>,
     evaluator: &E,
 ) -> Result<(Move, i32), SearchInterrupted> {
-    let mut best_move = moves[0];
+    let analysis = analyze(pos);
+    let tt_move = ctx
+        .tt
+        .probe(pos.hash(), 0)
+        .map_or(Move::NULL, |hit| hit.best_move);
+    let mut picker = MovePicker::new(pos, &analysis, tt_move, TtMode::ValidateInStage);
+    let mut best_move = Move::NULL;
     let mut alpha = i32::MIN / 2;
     let beta = i32::MAX / 2;
+    let mut saw_move = false;
 
-    for &mv in moves {
+    while let Some(mv) = picker.next_move(pos, &analysis) {
+        saw_move = true;
         if ctx.should_stop_now() {
             return Err(SearchInterrupted);
         }
@@ -130,5 +141,6 @@ fn search_root<E: Evaluator>(
         }
     }
 
+    debug_assert!(saw_move, "root search called without legal moves");
     Ok((best_move, alpha))
 }

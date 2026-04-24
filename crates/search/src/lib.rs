@@ -1,6 +1,8 @@
 mod alphabeta;
 mod control;
 mod limits;
+mod picker;
+mod qsearch;
 mod root;
 mod types;
 

@@ -35,6 +35,30 @@ pub(crate) fn generate<const STAGE: u8>(pos: &Position, list: &mut MoveList) {
 }
 
 #[inline(always)]
+pub fn generate_all_with_analysis(pos: &Position, analysis: &Analysis, list: &mut MoveList) {
+    generate_with_analysis::<{ GenerationStage::All as u8 }>(pos, analysis, list);
+}
+
+#[inline(always)]
+pub fn generate_captures_promotions_with_analysis(
+    pos: &Position,
+    analysis: &Analysis,
+    list: &mut MoveList,
+) {
+    generate_with_analysis::<{ GenerationStage::CapturesPromotions as u8 }>(pos, analysis, list);
+}
+
+#[inline(always)]
+pub fn generate_quiets_with_analysis(pos: &Position, analysis: &Analysis, list: &mut MoveList) {
+    generate_with_analysis::<{ GenerationStage::Quiets as u8 }>(pos, analysis, list);
+}
+
+#[inline(always)]
+pub fn generate_evasions_with_analysis(pos: &Position, analysis: &Analysis, list: &mut MoveList) {
+    generate_with_analysis::<{ GenerationStage::Evasions as u8 }>(pos, analysis, list);
+}
+
+#[inline(always)]
 pub(crate) fn generate_with_analysis<const STAGE: u8>(
     pos: &Position,
     analysis: &Analysis,

@@ -6,9 +6,8 @@ use oopsmate_movegen::analyze;
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::picker::{MovePicker, TtMode};
 use crate::qsearch::{NO_STATIC_EVAL, qsearch};
+use crate::tune::PVS_FULL_WINDOW_MOVES;
 use crate::types::mate_score;
-
-const PVS_FULL_WINDOW_MOVES: usize = 2;
 
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,

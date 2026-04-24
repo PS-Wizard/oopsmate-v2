@@ -7,6 +7,7 @@ use oopsmate_movegen::{
 };
 
 use crate::control::{SearchContext, SearchInterrupted};
+use crate::tune::{QSEARCH_CAPTURE_BASE, QSEARCH_DELTA_MARGIN, QSEARCH_PROMOTION_BASE};
 use crate::types::{is_mate_score, mate_score};
 
 pub(crate) const NO_STATIC_EVAL: i16 = i16::MIN;
@@ -315,7 +316,7 @@ fn delta_prune_move(pos: &Position, mv: Move, static_eval: i32, alpha: i32) -> b
     }
 
     let captured = captured_piece(pos, mv);
-    static_eval + PIECE_VALUES[captured.index()] + DELTA_MARGIN <= alpha
+    static_eval + PIECE_VALUES[captured.index()] + QSEARCH_DELTA_MARGIN <= alpha
 }
 
 #[inline(always)]
@@ -332,7 +333,7 @@ fn score_qmove(pos: &Position, mv: Move) -> i16 {
     let mut score = 0;
 
     if (kind & 0x8) != 0 {
-        score += PROMOTION_BASE + PIECE_VALUES[((kind & 0x3) as usize) + 1];
+        score += QSEARCH_PROMOTION_BASE + PIECE_VALUES[((kind & 0x3) as usize) + 1];
     }
 
     if (kind & 0x4) != 0 || kind == MoveKind::EnPassant as u8 {
@@ -341,8 +342,8 @@ fn score_qmove(pos: &Position, mv: Move) -> i16 {
             .map_or(Piece::Pawn, |(piece, _)| piece);
         let captured = captured_piece(pos, mv);
 
-        score +=
-            CAPTURE_BASE + PIECE_VALUES[captured.index()] * 16 - PIECE_VALUES[attacker.index()];
+        score += QSEARCH_CAPTURE_BASE + PIECE_VALUES[captured.index()] * 16
+            - PIECE_VALUES[attacker.index()];
     }
 
     debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
@@ -377,9 +378,6 @@ fn pack_static_eval(score: i32) -> i16 {
 }
 
 const PIECE_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 0];
-const CAPTURE_BASE: i32 = 10_000;
-const PROMOTION_BASE: i32 = 20_000;
-const DELTA_MARGIN: i32 = 200;
 
 #[cfg(test)]
 mod tests {

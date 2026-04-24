@@ -4,6 +4,7 @@ mod limits;
 mod picker;
 mod qsearch;
 mod root;
+mod tune;
 mod types;
 
 pub use limits::{ClockLimits, SearchLimits};

@@ -7,6 +7,8 @@ use oopsmate_movegen::{
     generate_evasions_with_analysis, generate_quiets_with_analysis,
 };
 
+use crate::tune::{MOVE_PICKER_CAPTURE_BASE, MOVE_PICKER_PROMOTION_BASE};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TtMode {
     ValidateInStage,
@@ -229,8 +231,6 @@ impl MovePicker {
 }
 
 const PIECE_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 0];
-const CAPTURE_BASE: i32 = 10_000;
-const PROMOTION_BASE: i32 = 20_000;
 
 #[inline(always)]
 fn score_move(pos: &Position, mv: Move) -> i16 {
@@ -239,7 +239,7 @@ fn score_move(pos: &Position, mv: Move) -> i16 {
 
     if kind.is_promotion() {
         let promoted = kind.promotion_piece().expect("promotion piece");
-        score += PROMOTION_BASE + PIECE_VALUES[promoted.index()];
+        score += MOVE_PICKER_PROMOTION_BASE + PIECE_VALUES[promoted.index()];
     }
 
     if kind.is_capture() || kind == MoveKind::EnPassant {
@@ -253,8 +253,8 @@ fn score_move(pos: &Position, mv: Move) -> i16 {
                 .map_or(Piece::Pawn, |(piece, _)| piece)
         };
 
-        score +=
-            CAPTURE_BASE + PIECE_VALUES[captured.index()] * 16 - PIECE_VALUES[attacker.index()];
+        score += MOVE_PICKER_CAPTURE_BASE + PIECE_VALUES[captured.index()] * 16
+            - PIECE_VALUES[attacker.index()];
     }
 
     debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);

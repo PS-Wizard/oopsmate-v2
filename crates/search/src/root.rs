@@ -8,9 +8,9 @@ use oopsmate_movegen::{MAX_MOVES, MoveList, analyze, generate_all_with_analysis}
 use crate::alphabeta::search_node;
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
+use crate::tune::MAX_SEARCH_DEPTH;
 use crate::types::{SearchResult, mate_score};
 
-const MAX_SEARCH_DEPTH: u8 = 64;
 const ROOT_SCORE_UNSEARCHED: i32 = i32::MIN;
 
 pub fn search<E: Evaluator>(

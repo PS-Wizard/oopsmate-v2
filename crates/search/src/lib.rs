@@ -4,12 +4,13 @@ mod limits;
 mod picker;
 mod qsearch;
 mod root;
+mod selectivity;
 mod tune;
 mod types;
 
 pub use limits::{ClockLimits, SearchLimits};
 pub use root::{search, search_with_reporter};
-pub use types::{MATE_SCORE, SearchResult, is_mate_score, mate_in};
+pub use types::{is_mate_score, mate_in, SearchResult, MATE_SCORE};
 
 #[cfg(test)]
 mod tests;

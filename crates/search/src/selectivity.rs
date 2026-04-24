@@ -1,0 +1,234 @@
+use oopsmate_core::{Move, MoveKind, Piece, Position};
+
+use crate::tune::{
+    FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
+    FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, LATE_QUIET_PRUNE_MAX_DEPTH,
+    LATE_QUIET_PRUNE_MIN_DEPTH, LATE_QUIET_PRUNE_MOVE_MULT, LATE_QUIET_PRUNE_MOVE_OFFSET,
+    LMR_FULL_DEPTH_MOVES, LMR_MIN_DEPTH, NULL_MOVE_MIN_DEPTH, RAZOR_MARGIN_1, RAZOR_MARGIN_2,
+    RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3, RFP_MARGIN_4,
+    RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
+};
+use crate::types::is_mate_score;
+
+#[derive(Clone, Copy)]
+pub(crate) struct NodeState {
+    pub(crate) ply: u8,
+    pub(crate) pv_node: bool,
+    pub(crate) cut_node: bool,
+}
+
+impl NodeState {
+    #[inline(always)]
+    #[must_use]
+    pub(crate) const fn new(ply: u8, pv_node: bool, alpha: i32, beta: i32) -> Self {
+        Self {
+            ply,
+            pv_node,
+            cut_node: beta == alpha + 1,
+        }
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub(crate) const fn child(self, pv_node: bool, alpha: i32, beta: i32) -> Self {
+        Self::new(self.ply + 1, pv_node, alpha, beta)
+    }
+}
+
+#[inline(always)]
+pub(crate) fn can_use_selective_pruning(
+    pos: &Position,
+    node: NodeState,
+    alpha: i32,
+    beta: i32,
+    in_check: bool,
+) -> bool {
+    node.cut_node
+        && !in_check
+        && !is_mate_score(alpha)
+        && !is_mate_score(beta)
+        && has_non_pawn_material(pos)
+}
+
+#[inline(always)]
+pub(crate) const fn needs_static_eval(depth: u8, can_selectively_prune: bool) -> bool {
+    can_selectively_prune
+        && (depth >= NULL_MOVE_MIN_DEPTH
+            || depth <= FUTILITY_MAX_DEPTH
+            || depth <= RFP_MAX_DEPTH
+            || depth <= RAZOR_MAX_DEPTH)
+}
+
+#[inline(always)]
+pub(crate) fn should_try_razoring(
+    depth: u8,
+    static_eval: i32,
+    alpha: i32,
+    can_selectively_prune: bool,
+) -> bool {
+    can_selectively_prune && depth <= RAZOR_MAX_DEPTH && static_eval + razor_margin(depth) < alpha
+}
+
+#[inline(always)]
+pub(crate) const fn razor_margin(depth: u8) -> i32 {
+    match depth {
+        1 => RAZOR_MARGIN_1,
+        2 => RAZOR_MARGIN_2,
+        _ => RAZOR_MARGIN_3,
+    }
+}
+
+#[inline(always)]
+pub(crate) fn should_prune_reverse_futility(
+    depth: u8,
+    static_eval: i32,
+    beta: i32,
+    can_selectively_prune: bool,
+) -> bool {
+    can_selectively_prune && depth <= RFP_MAX_DEPTH && static_eval - rfp_margin(depth) >= beta
+}
+
+#[inline(always)]
+pub(crate) const fn rfp_margin(depth: u8) -> i32 {
+    match depth {
+        1 => RFP_MARGIN_1,
+        2 => RFP_MARGIN_2,
+        3 => RFP_MARGIN_3,
+        4 => RFP_MARGIN_4,
+        5 => RFP_MARGIN_5,
+        6 => RFP_MARGIN_6,
+        _ => RFP_MARGIN_7,
+    }
+}
+
+#[inline(always)]
+pub(crate) fn should_try_null_move(
+    depth: u8,
+    static_eval: i32,
+    beta: i32,
+    can_selectively_prune: bool,
+) -> bool {
+    can_selectively_prune && depth >= NULL_MOVE_MIN_DEPTH && static_eval >= beta
+}
+
+#[inline(always)]
+pub(crate) fn null_move_depth(depth: u8, static_eval: i32, beta: i32) -> u8 {
+    let eval_excess = static_eval.saturating_sub(beta).max(0);
+    let reduction_bonus = (eval_excess / 200).min(4) as u8;
+    let reduction = depth / 3 + 3 + reduction_bonus;
+    depth.saturating_sub(reduction)
+}
+
+#[inline(always)]
+pub(crate) fn should_prune_futility(
+    mv: Move,
+    tt_move: Move,
+    quiet: bool,
+    maybe_check: bool,
+    depth: u8,
+    alpha: i32,
+    static_eval: i32,
+    can_selectively_prune: bool,
+) -> bool {
+    can_selectively_prune
+        && depth <= FUTILITY_MAX_DEPTH
+        && mv != tt_move
+        && quiet
+        && static_eval + futility_margin(depth) <= alpha
+        && !maybe_check
+}
+
+#[inline(always)]
+pub(crate) fn should_prune_late_quiet(
+    mv: Move,
+    tt_move: Move,
+    quiet: bool,
+    maybe_check: bool,
+    depth: u8,
+    searched_moves: usize,
+    can_selectively_prune: bool,
+) -> bool {
+    can_selectively_prune
+        && depth >= LATE_QUIET_PRUNE_MIN_DEPTH
+        && depth <= LATE_QUIET_PRUNE_MAX_DEPTH
+        && searched_moves >= late_quiet_prune_moves(depth)
+        && mv != tt_move
+        && quiet
+        && !maybe_check
+}
+
+#[inline(always)]
+pub(crate) const fn late_quiet_prune_moves(depth: u8) -> usize {
+    depth as usize * LATE_QUIET_PRUNE_MOVE_MULT - LATE_QUIET_PRUNE_MOVE_OFFSET
+}
+
+#[inline(always)]
+pub(crate) const fn futility_margin(depth: u8) -> i32 {
+    match depth {
+        1 => FUTILITY_MARGIN_1,
+        2 => FUTILITY_MARGIN_2,
+        3 => FUTILITY_MARGIN_3,
+        4 => FUTILITY_MARGIN_4,
+        5 => FUTILITY_MARGIN_5,
+        6 => FUTILITY_MARGIN_6,
+        _ => FUTILITY_MARGIN_7,
+    }
+}
+
+#[inline(always)]
+pub(crate) fn should_reduce_lmr(
+    mv: Move,
+    tt_move: Move,
+    quiet: bool,
+    in_check: bool,
+    depth: u8,
+    searched_moves: usize,
+    try_null_window: bool,
+) -> bool {
+    try_null_window
+        && !in_check
+        && depth >= LMR_MIN_DEPTH
+        && searched_moves >= LMR_FULL_DEPTH_MOVES
+        && mv != tt_move
+        && quiet
+}
+
+#[inline(always)]
+pub(crate) const fn lmr_reduction(depth: u8, searched_moves: usize, node: NodeState) -> u8 {
+    let mut reduction = if depth >= 12 && searched_moves >= 16 {
+        4
+    } else if depth >= 8 && searched_moves >= 8 {
+        3
+    } else if depth >= 5 && searched_moves >= 4 {
+        2
+    } else {
+        1
+    };
+
+    if node.pv_node && reduction > 1 {
+        reduction -= 1;
+    }
+
+    if reduction >= depth {
+        depth - 1
+    } else {
+        reduction
+    }
+}
+
+#[inline(always)]
+pub(crate) const fn is_quiet_move(mv: Move) -> bool {
+    matches!(
+        mv.kind(),
+        MoveKind::Quiet | MoveKind::DoublePush | MoveKind::Castle
+    )
+}
+
+#[inline(always)]
+fn has_non_pawn_material(pos: &Position) -> bool {
+    let board = pos.board();
+    let side = pos.side_to_move();
+    let pieces =
+        board.color_bb(side) & !(board.piece_bb(Piece::Pawn) | board.piece_bb(Piece::King));
+    pieces != 0
+}

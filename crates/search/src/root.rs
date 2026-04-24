@@ -5,9 +5,10 @@ use oopsmate_eval::Evaluator;
 use oopsmate_memory::SearchMemory;
 use oopsmate_movegen::{analyze, generate_all_with_analysis, MoveList, MAX_MOVES};
 
-use crate::alphabeta::{search_node, NodeState};
+use crate::alphabeta::search_node;
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
+use crate::selectivity::NodeState;
 use crate::tune::{
     ASPIRATION_MAX_WINDOW, ASPIRATION_MIN_DEPTH, ASPIRATION_WINDOW, MAX_SEARCH_DEPTH,
 };

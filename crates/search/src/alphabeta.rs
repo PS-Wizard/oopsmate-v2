@@ -1,4 +1,4 @@
-use oopsmate_core::{Move, MoveKind, Piece, Position};
+use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
 use oopsmate_movegen::{analyze, might_give_check};
@@ -6,41 +6,14 @@ use oopsmate_movegen::{analyze, might_give_check};
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::picker::{MovePicker, TtMode};
 use crate::qsearch::{qsearch, NO_STATIC_EVAL};
-use crate::tune::{
-    FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
-    FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, LATE_QUIET_PRUNE_MAX_DEPTH,
-    LATE_QUIET_PRUNE_MIN_DEPTH, LATE_QUIET_PRUNE_MOVE_MULT, LATE_QUIET_PRUNE_MOVE_OFFSET,
-    LMR_FULL_DEPTH_MOVES, LMR_MIN_DEPTH, LMR_REDUCTION, NULL_MOVE_MIN_DEPTH, NULL_MOVE_REDUCTION,
-    PVS_FULL_WINDOW_MOVES, RAZOR_MARGIN_1, RAZOR_MARGIN_2, RAZOR_MARGIN_3, RAZOR_MAX_DEPTH,
-    RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3, RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6,
-    RFP_MARGIN_7, RFP_MAX_DEPTH,
+use crate::selectivity::{
+    can_use_selective_pruning, futility_margin, is_quiet_move, lmr_reduction, needs_static_eval,
+    null_move_depth, razor_margin, rfp_margin, should_prune_futility, should_prune_late_quiet,
+    should_prune_reverse_futility, should_reduce_lmr, should_try_null_move, should_try_razoring,
+    NodeState,
 };
-use crate::types::{is_mate_score, mate_score};
-
-#[derive(Clone, Copy)]
-pub(crate) struct NodeState {
-    pub(crate) ply: u8,
-    pub(crate) pv_node: bool,
-    pub(crate) cut_node: bool,
-}
-
-impl NodeState {
-    #[inline(always)]
-    #[must_use]
-    pub(crate) const fn new(ply: u8, pv_node: bool, alpha: i32, beta: i32) -> Self {
-        Self {
-            ply,
-            pv_node,
-            cut_node: beta == alpha + 1,
-        }
-    }
-
-    #[inline(always)]
-    #[must_use]
-    const fn child(self, pv_node: bool, alpha: i32, beta: i32) -> Self {
-        Self::new(self.ply + 1, pv_node, alpha, beta)
-    }
-}
+use crate::tune::PVS_FULL_WINDOW_MOVES;
+use crate::types::mate_score;
 
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
@@ -121,7 +94,7 @@ pub(crate) fn search_node<E: Evaluator>(
         pos.make_null_move();
         let score = match search_node(
             pos,
-            depth - 1 - NULL_MOVE_REDUCTION,
+            null_move_depth(depth, static_eval, beta),
             node.child(false, -beta, -beta + 1),
             -beta,
             -beta + 1,
@@ -207,7 +180,6 @@ pub(crate) fn search_node<E: Evaluator>(
             mv,
             tt_move,
             quiet,
-            maybe_check,
             in_check,
             searched_moves,
             alpha,
@@ -286,150 +258,6 @@ pub(crate) fn search_node<E: Evaluator>(
 }
 
 #[inline(always)]
-fn can_use_selective_pruning(
-    pos: &Position,
-    node: NodeState,
-    alpha: i32,
-    beta: i32,
-    in_check: bool,
-) -> bool {
-    node.cut_node
-        && !in_check
-        && !is_mate_score(alpha)
-        && !is_mate_score(beta)
-        && has_non_pawn_material(pos)
-}
-
-#[inline(always)]
-const fn needs_static_eval(depth: u8, can_selectively_prune: bool) -> bool {
-    can_selectively_prune
-        && (depth >= NULL_MOVE_MIN_DEPTH
-            || depth <= FUTILITY_MAX_DEPTH
-            || depth <= RFP_MAX_DEPTH
-            || depth <= RAZOR_MAX_DEPTH)
-}
-
-#[inline(always)]
-fn should_try_razoring(
-    depth: u8,
-    static_eval: i32,
-    alpha: i32,
-    can_selectively_prune: bool,
-) -> bool {
-    can_selectively_prune && depth <= RAZOR_MAX_DEPTH && static_eval + razor_margin(depth) < alpha
-}
-
-#[inline(always)]
-const fn razor_margin(depth: u8) -> i32 {
-    match depth {
-        1 => RAZOR_MARGIN_1,
-        2 => RAZOR_MARGIN_2,
-        _ => RAZOR_MARGIN_3,
-    }
-}
-
-#[inline(always)]
-fn should_prune_reverse_futility(
-    depth: u8,
-    static_eval: i32,
-    beta: i32,
-    can_selectively_prune: bool,
-) -> bool {
-    can_selectively_prune && depth <= RFP_MAX_DEPTH && static_eval - rfp_margin(depth) >= beta
-}
-
-#[inline(always)]
-const fn rfp_margin(depth: u8) -> i32 {
-    match depth {
-        1 => RFP_MARGIN_1,
-        2 => RFP_MARGIN_2,
-        3 => RFP_MARGIN_3,
-        4 => RFP_MARGIN_4,
-        5 => RFP_MARGIN_5,
-        6 => RFP_MARGIN_6,
-        _ => RFP_MARGIN_7,
-    }
-}
-
-#[inline(always)]
-fn should_try_null_move(
-    depth: u8,
-    static_eval: i32,
-    beta: i32,
-    can_selectively_prune: bool,
-) -> bool {
-    can_selectively_prune
-        && depth > NULL_MOVE_REDUCTION
-        && depth >= NULL_MOVE_MIN_DEPTH
-        && static_eval >= beta
-}
-
-#[inline(always)]
-fn should_prune_futility(
-    mv: Move,
-    tt_move: Move,
-    quiet: bool,
-    maybe_check: bool,
-    depth: u8,
-    alpha: i32,
-    static_eval: i32,
-    can_selectively_prune: bool,
-) -> bool {
-    can_selectively_prune
-        && depth <= FUTILITY_MAX_DEPTH
-        && mv != tt_move
-        && quiet
-        && static_eval + futility_margin(depth) <= alpha
-        && !maybe_check
-}
-
-#[inline(always)]
-fn should_prune_late_quiet(
-    mv: Move,
-    tt_move: Move,
-    quiet: bool,
-    maybe_check: bool,
-    depth: u8,
-    searched_moves: usize,
-    can_selectively_prune: bool,
-) -> bool {
-    can_selectively_prune
-        && depth >= LATE_QUIET_PRUNE_MIN_DEPTH
-        && depth <= LATE_QUIET_PRUNE_MAX_DEPTH
-        && searched_moves >= late_quiet_prune_moves(depth)
-        && mv != tt_move
-        && quiet
-        && !maybe_check
-}
-
-#[inline(always)]
-const fn late_quiet_prune_moves(depth: u8) -> usize {
-    depth as usize * LATE_QUIET_PRUNE_MOVE_MULT - LATE_QUIET_PRUNE_MOVE_OFFSET
-}
-
-#[inline(always)]
-const fn futility_margin(depth: u8) -> i32 {
-    match depth {
-        1 => FUTILITY_MARGIN_1,
-        2 => FUTILITY_MARGIN_2,
-        3 => FUTILITY_MARGIN_3,
-        4 => FUTILITY_MARGIN_4,
-        5 => FUTILITY_MARGIN_5,
-        6 => FUTILITY_MARGIN_6,
-        _ => FUTILITY_MARGIN_7,
-    }
-}
-
-#[inline(always)]
-fn has_non_pawn_material(pos: &Position) -> bool {
-    let board = pos.board();
-    let side = pos.side_to_move();
-    let pieces =
-        board.color_bb(side) & !(board.piece_bb(Piece::Pawn) | board.piece_bb(Piece::King));
-    pieces != 0
-}
-
-#[inline(always)]
 fn search_child<E: Evaluator>(
     pos: &mut Position,
     depth: u8,
@@ -437,7 +265,6 @@ fn search_child<E: Evaluator>(
     mv: Move,
     tt_move: Move,
     quiet: bool,
-    maybe_check: bool,
     in_check: bool,
     searched_moves: usize,
     alpha: i32,
@@ -452,14 +279,12 @@ fn search_child<E: Evaluator>(
         mv,
         tt_move,
         quiet,
-        maybe_check,
         in_check,
         depth,
-        node,
         searched_moves,
         try_null_window,
     ) {
-        let reduced_depth = child_depth.saturating_sub(LMR_REDUCTION);
+        let reduced_depth = child_depth.saturating_sub(lmr_reduction(depth, searched_moves, node));
         let score = -search_node(
             pos,
             reduced_depth,
@@ -498,34 +323,4 @@ fn search_child<E: Evaluator>(
         ctx,
         evaluator,
     )?)
-}
-
-#[inline(always)]
-fn should_reduce_lmr(
-    mv: Move,
-    tt_move: Move,
-    quiet: bool,
-    maybe_check: bool,
-    in_check: bool,
-    depth: u8,
-    node: NodeState,
-    searched_moves: usize,
-    try_null_window: bool,
-) -> bool {
-    try_null_window
-        && !node.pv_node
-        && !in_check
-        && depth >= LMR_MIN_DEPTH
-        && searched_moves >= LMR_FULL_DEPTH_MOVES
-        && mv != tt_move
-        && quiet
-        && !maybe_check
-}
-
-#[inline(always)]
-const fn is_quiet_move(mv: Move) -> bool {
-    matches!(
-        mv.kind(),
-        MoveKind::Quiet | MoveKind::DoublePush | MoveKind::Castle
-    )
 }

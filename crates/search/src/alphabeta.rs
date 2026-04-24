@@ -9,8 +9,9 @@ use crate::qsearch::{qsearch, NO_STATIC_EVAL};
 use crate::tune::{
     FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
     FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, NULL_MOVE_MIN_DEPTH,
-    NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3,
-    RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
+    NULL_MOVE_REDUCTION, PVS_FULL_WINDOW_MOVES, RAZOR_MARGIN_1, RAZOR_MARGIN_2, RAZOR_MARGIN_3,
+    RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3, RFP_MARGIN_4, RFP_MARGIN_5,
+    RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
 };
 use crate::types::{is_mate_score, mate_score};
 
@@ -57,6 +58,15 @@ pub(crate) fn search_node<E: Evaluator>(
     } else {
         0
     };
+
+    if should_try_razoring(depth, static_eval, alpha, can_static_prune) {
+        let margin = razor_margin(depth);
+        let window_alpha = alpha - margin;
+        let score = qsearch(pos, ply, window_alpha, window_alpha + 1, ctx, evaluator)?;
+        if score < window_alpha {
+            return Ok(score);
+        }
+    }
 
     if should_prune_reverse_futility(depth, static_eval, beta, can_static_prune) {
         let score = static_eval - rfp_margin(depth);
@@ -225,7 +235,24 @@ fn can_use_static_pruning(
         && !is_mate_score(alpha)
         && !is_mate_score(beta)
         && has_non_pawn_material(pos)
-        && (depth >= NULL_MOVE_MIN_DEPTH || depth <= FUTILITY_MAX_DEPTH || depth <= RFP_MAX_DEPTH)
+        && (depth >= NULL_MOVE_MIN_DEPTH
+            || depth <= FUTILITY_MAX_DEPTH
+            || depth <= RFP_MAX_DEPTH
+            || depth <= RAZOR_MAX_DEPTH)
+}
+
+#[inline(always)]
+fn should_try_razoring(depth: u8, static_eval: i32, alpha: i32, can_static_prune: bool) -> bool {
+    can_static_prune && depth <= RAZOR_MAX_DEPTH && static_eval + razor_margin(depth) < alpha
+}
+
+#[inline(always)]
+const fn razor_margin(depth: u8) -> i32 {
+    match depth {
+        1 => RAZOR_MARGIN_1,
+        2 => RAZOR_MARGIN_2,
+        _ => RAZOR_MARGIN_3,
+    }
 }
 
 #[inline(always)]

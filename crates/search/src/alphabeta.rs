@@ -8,6 +8,8 @@ use crate::picker::{MovePicker, TtMode};
 use crate::qsearch::{NO_STATIC_EVAL, qsearch};
 use crate::types::mate_score;
 
+const PVS_FULL_WINDOW_MOVES: usize = 2;
+
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
     depth: u8,
@@ -54,13 +56,23 @@ pub(crate) fn search_node<E: Evaluator>(
     let mut best_move = Move::NULL;
     let mut best_score = i32::MIN / 2;
     let mut saw_legal_move = false;
+    let mut searched_moves = 0usize;
 
     while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
         saw_legal_move = true;
         evaluator.push_move(pos, mv);
         pos.make_move(mv);
-        let score = match search_node(pos, depth - 1, ply + 1, -beta, -alpha, ctx, evaluator) {
-            Ok(score) => -score,
+        let score = match search_child(
+            pos,
+            depth - 1,
+            ply + 1,
+            alpha,
+            beta,
+            searched_moves >= PVS_FULL_WINDOW_MOVES,
+            ctx,
+            evaluator,
+        ) {
+            Ok(score) => score,
             Err(err) => {
                 pos.unmake_move(mv);
                 evaluator.pop_move();
@@ -69,6 +81,7 @@ pub(crate) fn search_node<E: Evaluator>(
         };
         pos.unmake_move(mv);
         evaluator.pop_move();
+        searched_moves += 1;
 
         if score > best_score {
             best_score = score;
@@ -126,6 +139,32 @@ pub(crate) fn search_node<E: Evaluator>(
 }
 
 #[inline(always)]
+fn search_child<E: Evaluator>(
+    pos: &mut Position,
+    depth: u8,
+    ply: u8,
+    alpha: i32,
+    beta: i32,
+    try_null_window: bool,
+    ctx: &mut SearchContext<'_>,
+    evaluator: &mut E,
+) -> Result<i32, SearchInterrupted> {
+    if try_null_window {
+        let score = -search_node(pos, depth, ply, -alpha - 1, -alpha, ctx, evaluator)?;
+        if score <= alpha || score >= beta {
+            return Ok(score);
+        }
+    }
+
+    Ok(-search_node(
+        pos, depth, ply, -beta, -alpha, ctx, evaluator,
+    )?)
+}
+
+#[inline(always)]
 const fn is_quiet_move(mv: Move) -> bool {
-    matches!(mv.kind(), MoveKind::Quiet | MoveKind::DoublePush | MoveKind::Castle)
+    matches!(
+        mv.kind(),
+        MoveKind::Quiet | MoveKind::DoublePush | MoveKind::Castle
+    )
 }

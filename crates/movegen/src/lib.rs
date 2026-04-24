@@ -9,6 +9,7 @@ mod legal;
 mod list;
 mod pawns;
 mod perft;
+mod see;
 mod sliders;
 mod stage;
 mod util;
@@ -26,6 +27,7 @@ pub use perft::{
     KIWIPETE, PERFT_CASES, POSITION_3, POSITION_4, POSITION_5, POSITION_6, PerftCase, STARTPOS,
     perft,
 };
+pub use see::see_ge;
 pub use stage::GenerationStage;
 
 #[cfg(test)]

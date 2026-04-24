@@ -3,11 +3,11 @@ use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
 use oopsmate_movegen::{
     Analysis, MoveList, analyze, generate_captures_promotions_with_analysis,
-    generate_evasions_with_analysis, is_pseudo_legal,
+    generate_evasions_with_analysis, see_ge,
 };
 
 use crate::control::{SearchContext, SearchInterrupted};
-use crate::types::mate_score;
+use crate::types::{is_mate_score, mate_score};
 
 pub(crate) const NO_STATIC_EVAL: i16 = i16::MIN;
 
@@ -74,13 +74,13 @@ pub(crate) fn qsearch<E: Evaluator>(
     let mut moves = MoveList::new();
     generate_captures_promotions_with_analysis(pos, &analysis, &mut moves);
 
-    let mut next = 0usize;
+    let mut skip = Move::NULL;
     if tt_move != Move::NULL
         && is_valid_encoded_move(tt_move)
         && is_tactical_move(tt_move)
-        && is_pseudo_legal(pos, tt_move)
         && moves.contains(tt_move)
     {
+        skip = tt_move;
         pos.make_move(tt_move);
         let score = match qsearch(pos, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
@@ -114,7 +114,12 @@ pub(crate) fn qsearch<E: Evaluator>(
         }
     }
 
-    while let Some(mv) = next_qmove(pos, &mut moves, &mut next, tt_move) {
+    let mut next = 0usize;
+    while let Some(mv) = next_qmove(pos, &mut moves, &mut next, skip) {
+        if delta_prune_move(pos, mv, static_eval, alpha) || see_prune_move(pos, mv) {
+            continue;
+        }
+
         pos.make_move(mv);
         let score = match qsearch(pos, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
@@ -198,8 +203,10 @@ fn qsearch_evasions<E: Evaluator>(
     let mut best_move = Move::NULL;
     let mut best_score = i32::MIN / 2;
     let mut next = 0usize;
+    let mut skip = Move::NULL;
 
     if tt_move != Move::NULL && is_valid_encoded_move(tt_move) && moves.contains(tt_move) {
+        skip = tt_move;
         pos.make_move(tt_move);
         let score = match qsearch(pos, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
@@ -224,7 +231,7 @@ fn qsearch_evasions<E: Evaluator>(
         }
     }
 
-    while let Some(mv) = next_qmove(pos, &mut moves, &mut next, tt_move) {
+    while let Some(mv) = next_qmove(pos, &mut moves, &mut next, skip) {
         pos.make_move(mv);
         let score = match qsearch(pos, ply + 1, -beta, -alpha, ctx, evaluator) {
             Ok(score) => -score,
@@ -290,25 +297,37 @@ fn next_qmove(pos: &Position, moves: &mut MoveList, next: &mut usize, skip: Move
 }
 
 #[inline(always)]
-fn score_qmove(pos: &Position, mv: Move) -> i16 {
-    let kind = mv.kind();
-    let mut score = 0;
-
-    if kind.is_promotion() {
-        let promoted = kind.promotion_piece().expect("promotion piece");
-        score += PROMOTION_BASE + PIECE_VALUES[promoted.index()];
+fn delta_prune_move(pos: &Position, mv: Move, static_eval: i32, alpha: i32) -> bool {
+    if is_mate_score(alpha) || mv.is_promotion() {
+        return false;
     }
 
-    if kind.is_capture() || kind == MoveKind::EnPassant {
+    let captured = captured_piece(pos, mv);
+    static_eval + PIECE_VALUES[captured.index()] + DELTA_MARGIN <= alpha
+}
+
+#[inline(always)]
+fn see_prune_move(pos: &Position, mv: Move) -> bool {
+    mv.is_capture()
+        && !mv.is_promotion()
+        && mv.kind() != MoveKind::EnPassant
+        && !see_ge(pos, mv, 0)
+}
+
+#[inline(always)]
+fn score_qmove(pos: &Position, mv: Move) -> i16 {
+    let kind = (mv.0 >> 12) as u8;
+    let mut score = 0;
+
+    if (kind & 0x8) != 0 {
+        score += PROMOTION_BASE + PIECE_VALUES[((kind & 0x3) as usize) + 1];
+    }
+
+    if (kind & 0x4) != 0 || kind == MoveKind::EnPassant as u8 {
         let attacker = pos
             .piece_at(mv.from())
             .map_or(Piece::Pawn, |(piece, _)| piece);
-        let captured = if kind == MoveKind::EnPassant {
-            Piece::Pawn
-        } else {
-            pos.piece_at(mv.to())
-                .map_or(Piece::Pawn, |(piece, _)| piece)
-        };
+        let captured = captured_piece(pos, mv);
 
         score +=
             CAPTURE_BASE + PIECE_VALUES[captured.index()] * 16 - PIECE_VALUES[attacker.index()];
@@ -316,6 +335,15 @@ fn score_qmove(pos: &Position, mv: Move) -> i16 {
 
     debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
     score as i16
+}
+
+#[inline(always)]
+fn captured_piece(pos: &Position, mv: Move) -> Piece {
+    if ((mv.0 >> 12) as u8) == MoveKind::EnPassant as u8 {
+        Piece::Pawn
+    } else {
+        pos.piece_at(mv.to()).map_or(Piece::Pawn, |(piece, _)| piece)
+    }
 }
 
 #[inline(always)]
@@ -339,3 +367,30 @@ fn pack_static_eval(score: i32) -> i16 {
 const PIECE_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 0];
 const CAPTURE_BASE: i32 = 10_000;
 const PROMOTION_BASE: i32 = 20_000;
+const DELTA_MARGIN: i32 = 200;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oopsmate_core::Square;
+
+    fn square(text: &str) -> Square {
+        Square::from_algebraic(text).unwrap()
+    }
+
+    #[test]
+    fn delta_pruning_never_skips_promotions() {
+        let pos = Position::from_fen("4k3/3P4/8/8/8/8/8/4K3 w - - 0 1").unwrap();
+        let promotion = Move::new(square("d7"), square("d8"), MoveKind::PromotionQueen);
+
+        assert!(!delta_prune_move(&pos, promotion, -1000, 500));
+    }
+
+    #[test]
+    fn delta_pruning_skips_hopeless_small_capture() {
+        let pos = Position::from_fen("4k3/8/8/8/8/8/p7/R3K3 w - - 0 1").unwrap();
+        let capture = Move::new(square("a1"), square("a2"), MoveKind::Capture);
+
+        assert!(delta_prune_move(&pos, capture, -600, 0));
+    }
+}

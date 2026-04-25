@@ -4,9 +4,9 @@ use crate::tune::{
     FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
     FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, LATE_QUIET_PRUNE_MAX_DEPTH,
     LATE_QUIET_PRUNE_MIN_DEPTH, LATE_QUIET_PRUNE_MOVE_MULT, LATE_QUIET_PRUNE_MOVE_OFFSET,
-    LMR_FULL_DEPTH_MOVES, LMR_MIN_DEPTH, NULL_MOVE_MIN_DEPTH, RAZOR_MARGIN_1, RAZOR_MARGIN_2,
-    RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3, RFP_MARGIN_4,
-    RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
+    LMR_FULL_DEPTH_MOVES, LMR_HISTORY_BAD, LMR_HISTORY_GOOD, LMR_MIN_DEPTH, NULL_MOVE_MIN_DEPTH,
+    RAZOR_MARGIN_1, RAZOR_MARGIN_2, RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2,
+    RFP_MARGIN_3, RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
 };
 use crate::types::is_mate_score;
 
@@ -182,6 +182,7 @@ pub(crate) fn should_reduce_lmr(
     quiet: bool,
     in_check: bool,
     depth: u8,
+    _history_score: i16,
     searched_moves: usize,
     try_null_window: bool,
 ) -> bool {
@@ -194,7 +195,12 @@ pub(crate) fn should_reduce_lmr(
 }
 
 #[inline(always)]
-pub(crate) const fn lmr_reduction(depth: u8, searched_moves: usize, node: NodeState) -> u8 {
+pub(crate) const fn lmr_reduction(
+    depth: u8,
+    searched_moves: usize,
+    node: NodeState,
+    history_score: i16,
+) -> u8 {
     let mut reduction = if depth >= 12 && searched_moves >= 16 {
         4
     } else if depth >= 8 && searched_moves >= 8 {
@@ -204,6 +210,14 @@ pub(crate) const fn lmr_reduction(depth: u8, searched_moves: usize, node: NodeSt
     } else {
         1
     };
+
+    if history_score >= LMR_HISTORY_GOOD && reduction > 1 {
+        reduction -= 1;
+    }
+
+    if history_score <= LMR_HISTORY_BAD {
+        reduction += 1;
+    }
 
     if node.pv_node && reduction > 1 {
         reduction -= 1;
@@ -231,4 +245,21 @@ fn has_non_pawn_material(pos: &Position) -> bool {
     let pieces =
         board.color_bb(side) & !(board.piece_bb(Piece::Pawn) | board.piece_bb(Piece::King));
     pieces != 0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn good_history_reduces_lmr() {
+        let non_pv = NodeState::new(1, false, -1, 0);
+        assert_eq!(lmr_reduction(8, 8, non_pv, 128), 2);
+    }
+
+    #[test]
+    fn bad_history_increases_lmr() {
+        let non_pv = NodeState::new(1, false, -1, 0);
+        assert_eq!(lmr_reduction(8, 8, non_pv, -64), 4);
+    }
 }

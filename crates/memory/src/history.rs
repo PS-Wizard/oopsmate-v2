@@ -1,6 +1,7 @@
 use oopsmate_core::{Color, Move};
 
 const HISTORY_SIZE: usize = 64 * 64;
+const HISTORY_LIMIT: i32 = 16_384;
 
 #[derive(Debug)]
 pub struct HistoryTable {
@@ -28,9 +29,18 @@ impl HistoryTable {
 
     #[inline(always)]
     pub fn reward_quiet_cutoff(&mut self, side: Color, mv: Move, depth: u8) {
+        self.update(side, mv, history_bonus(depth));
+    }
+
+    #[inline(always)]
+    pub fn penalize_quiet_fail(&mut self, side: Color, mv: Move, depth: u8) {
+        self.update(side, mv, -history_bonus(depth) / 2);
+    }
+
+    #[inline(always)]
+    fn update(&mut self, side: Color, mv: Move, delta: i32) {
         let slot = &mut self.quiet[side.index()][index(mv)];
-        let bonus = i32::from(depth) * i32::from(depth);
-        *slot = slot.saturating_add(bonus);
+        *slot = (slot.saturating_add(delta)).clamp(-HISTORY_LIMIT, HISTORY_LIMIT);
     }
 }
 
@@ -38,6 +48,12 @@ impl Default for HistoryTable {
     fn default() -> Self {
         Self::new()
     }
+}
+
+#[inline(always)]
+const fn history_bonus(depth: u8) -> i32 {
+    let depth = depth as i32;
+    depth * depth
 }
 
 #[inline(always)]
@@ -73,5 +89,20 @@ mod tests {
         assert_eq!(history.score(Color::White, mv), 0);
         history.reward_quiet_cutoff(Color::White, mv, 5);
         assert_eq!(history.score(Color::White, mv), 25);
+    }
+
+    #[test]
+    fn quiet_fail_penalty_decreases_score() {
+        let mv = Move::new(
+            Square::from_algebraic("d2").unwrap(),
+            Square::from_algebraic("d4").unwrap(),
+            MoveKind::DoublePush,
+        );
+        let mut history = HistoryTable::new();
+
+        history.reward_quiet_cutoff(Color::White, mv, 6);
+        history.penalize_quiet_fail(Color::White, mv, 4);
+
+        assert_eq!(history.score(Color::White, mv), 28);
     }
 }

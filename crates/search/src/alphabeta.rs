@@ -1,7 +1,7 @@
 use oopsmate_core::{Move, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
-use oopsmate_movegen::{analyze, might_give_check};
+use oopsmate_movegen::{analyze, might_give_check, MAX_MOVES};
 
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::picker::{MovePicker, TtMode};
@@ -136,11 +136,18 @@ pub(crate) fn search_node<E: Evaluator>(
     let mut best_score = i32::MIN / 2;
     let mut saw_legal_move = false;
     let mut searched_moves = 0usize;
+    let mut searched_quiets = [Move::NULL; MAX_MOVES];
+    let mut searched_quiet_count = 0usize;
 
     while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
         saw_legal_move = true;
         let quiet = is_quiet_move(mv);
         let maybe_check = quiet && might_give_check(pos, mv);
+        let history_score = if quiet {
+            ctx.history.score(side, mv)
+        } else {
+            0
+        };
 
         if should_prune_futility(
             mv,
@@ -180,6 +187,7 @@ pub(crate) fn search_node<E: Evaluator>(
             mv,
             tt_move,
             quiet,
+            history_score,
             in_check,
             searched_moves,
             alpha,
@@ -198,6 +206,10 @@ pub(crate) fn search_node<E: Evaluator>(
         pos.unmake_move(mv);
         evaluator.pop_move();
         searched_moves += 1;
+        if quiet {
+            searched_quiets[searched_quiet_count] = mv;
+            searched_quiet_count += 1;
+        }
 
         if score > best_score {
             best_score = score;
@@ -207,6 +219,9 @@ pub(crate) fn search_node<E: Evaluator>(
         if score >= beta {
             if quiet {
                 ctx.history.reward_quiet_cutoff(side, mv, depth);
+                for &failed in &searched_quiets[..searched_quiet_count.saturating_sub(1)] {
+                    ctx.history.penalize_quiet_fail(side, failed, depth);
+                }
             }
             ctx.tt.store(
                 hash,
@@ -265,6 +280,7 @@ fn search_child<E: Evaluator>(
     mv: Move,
     tt_move: Move,
     quiet: bool,
+    history_score: i16,
     in_check: bool,
     searched_moves: usize,
     alpha: i32,
@@ -281,10 +297,12 @@ fn search_child<E: Evaluator>(
         quiet,
         in_check,
         depth,
+        history_score,
         searched_moves,
         try_null_window,
     ) {
-        let reduced_depth = child_depth.saturating_sub(lmr_reduction(depth, searched_moves, node));
+        let reduced_depth =
+            child_depth.saturating_sub(lmr_reduction(depth, searched_moves, node, history_score));
         let score = -search_node(
             pos,
             reduced_depth,

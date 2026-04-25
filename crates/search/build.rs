@@ -33,6 +33,8 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ("LATE_QUIET_PRUNE_MOVE_OFFSET", "usize", "6"),
     ("LMR_MIN_DEPTH", "u8", "3"),
     ("LMR_FULL_DEPTH_MOVES", "usize", "3"),
+    ("LMR_HISTORY_GOOD", "i16", "128"),
+    ("LMR_HISTORY_BAD", "i16", "-64"),
     ("MOVE_PICKER_CAPTURE_BASE", "i32", "10000"),
     ("MOVE_PICKER_BAD_CAPTURE_BASE", "i32", "0"),
     ("MOVE_PICKER_PROMOTION_BASE", "i32", "20000"),

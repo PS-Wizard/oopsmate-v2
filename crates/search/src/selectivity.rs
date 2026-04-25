@@ -12,6 +12,9 @@ use crate::tune::{
 };
 use crate::types::is_mate_score;
 
+const CAPTURE_LMR_MIN_DEPTH: u8 = 6;
+const CAPTURE_LMR_FULL_DEPTH_MOVES: usize = 6;
+
 #[derive(Clone, Copy)]
 pub(crate) struct NodeState {
     pub(crate) ply: u8,
@@ -214,18 +217,24 @@ pub(crate) fn should_reduce_lmr(
     mv: Move,
     tt_move: Move,
     quiet: bool,
+    reducible_capture: bool,
     in_check: bool,
     depth: u8,
     _history_score: i16,
     searched_moves: usize,
     try_null_window: bool,
 ) -> bool {
-    try_null_window
-        && !in_check
-        && depth >= LMR_MIN_DEPTH
-        && searched_moves >= LMR_FULL_DEPTH_MOVES
-        && mv != tt_move
-        && quiet
+    if !try_null_window || in_check || mv == tt_move {
+        return false;
+    }
+
+    if quiet {
+        return depth >= LMR_MIN_DEPTH && searched_moves >= LMR_FULL_DEPTH_MOVES;
+    }
+
+    reducible_capture
+        && depth >= CAPTURE_LMR_MIN_DEPTH
+        && searched_moves >= CAPTURE_LMR_FULL_DEPTH_MOVES
 }
 
 #[inline(always)]
@@ -234,8 +243,17 @@ pub(crate) const fn lmr_reduction(
     searched_moves: usize,
     node: NodeState,
     history_score: i16,
+    reducible_capture: bool,
 ) -> u8 {
-    let mut reduction = if depth >= 10 && searched_moves >= 12 {
+    let mut reduction = if reducible_capture {
+        if depth >= 12 && searched_moves >= 12 {
+            3
+        } else if depth >= 8 && searched_moves >= 8 {
+            2
+        } else {
+            1
+        }
+    } else if depth >= 10 && searched_moves >= 12 {
         4
     } else if depth >= 7 && searched_moves >= 6 {
         3
@@ -245,12 +263,14 @@ pub(crate) const fn lmr_reduction(
         1
     };
 
-    if history_score >= LMR_HISTORY_GOOD && reduction > 1 {
-        reduction -= 1;
-    }
+    if !reducible_capture {
+        if history_score >= LMR_HISTORY_GOOD && reduction > 1 {
+            reduction -= 1;
+        }
 
-    if history_score <= LMR_HISTORY_BAD {
-        reduction += 1;
+        if history_score <= LMR_HISTORY_BAD {
+            reduction += 1;
+        }
     }
 
     if node.pv_node && reduction > 1 {
@@ -273,6 +293,11 @@ pub(crate) const fn is_quiet_move(mv: Move) -> bool {
 }
 
 #[inline(always)]
+pub(crate) const fn is_reducible_capture_lmr_move(mv: Move) -> bool {
+    matches!(mv.kind(), MoveKind::Capture)
+}
+
+#[inline(always)]
 fn has_non_pawn_material(pos: &Position) -> bool {
     let board = pos.board();
     let side = pos.side_to_move();
@@ -289,19 +314,26 @@ mod tests {
     #[test]
     fn good_history_reduces_lmr() {
         let non_pv = NodeState::new(1, false, -1, 0);
-        assert_eq!(lmr_reduction(8, 8, non_pv, 128), 2);
+        assert_eq!(lmr_reduction(8, 8, non_pv, 128, false), 2);
     }
 
     #[test]
     fn bad_history_increases_lmr() {
         let non_pv = NodeState::new(1, false, -1, 0);
-        assert_eq!(lmr_reduction(8, 8, non_pv, -64), 4);
+        assert_eq!(lmr_reduction(8, 8, non_pv, -64, false), 4);
     }
 
     #[test]
     fn probcut_uses_configured_reduction() {
         assert_eq!(probcut_depth(5), 1);
         assert_eq!(probcut_depth(8), 4);
+    }
+
+    #[test]
+    fn capture_lmr_uses_smaller_reduction() {
+        let non_pv = NodeState::new(1, false, -1, 0);
+        assert_eq!(lmr_reduction(8, 8, non_pv, 0, true), 2);
+        assert_eq!(lmr_reduction(12, 12, non_pv, 0, true), 3);
     }
 
     #[test]

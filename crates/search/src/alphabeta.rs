@@ -10,11 +10,11 @@ use crate::control::{SearchContext, SearchInterrupted};
 use crate::picker::{MovePicker, TtMode};
 use crate::qsearch::{NO_STATIC_EVAL, qsearch};
 use crate::selectivity::{
-    NodeState, can_use_selective_pruning, futility_margin, is_quiet_move, lmr_reduction,
-    needs_static_eval, null_move_depth, probcut_beta, probcut_depth, razor_margin, rfp_margin,
-    should_apply_iir, should_prune_futility, should_prune_late_quiet,
-    should_prune_reverse_futility, should_reduce_lmr, should_try_null_move, should_try_probcut,
-    should_try_razoring,
+    NodeState, can_use_selective_pruning, futility_margin, is_quiet_move,
+    is_reducible_capture_lmr_move, lmr_reduction, needs_static_eval, null_move_depth,
+    probcut_beta, probcut_depth, razor_margin, rfp_margin, should_apply_iir,
+    should_prune_futility, should_prune_late_quiet, should_prune_reverse_futility,
+    should_reduce_lmr, should_try_null_move, should_try_probcut, should_try_razoring,
 };
 use crate::tune::{PROBCUT_MIN_DEPTH, PVS_FULL_WINDOW_MOVES};
 use crate::types::{is_mate_score, mate_score};
@@ -342,6 +342,7 @@ pub(crate) fn search_node<E: Evaluator>(
             0
         };
         let capture_record = capture_history_record(pos, mv);
+        let reducible_capture = is_reducible_capture_lmr_move(mv);
 
         if should_prune_futility(
             mv,
@@ -389,6 +390,7 @@ pub(crate) fn search_node<E: Evaluator>(
             mv,
             tt_move,
             quiet,
+            reducible_capture,
             history_score,
             in_check,
             searched_moves,
@@ -554,6 +556,7 @@ fn search_child<E: Evaluator>(
     mv: Move,
     tt_move: Move,
     quiet: bool,
+    reducible_capture: bool,
     history_score: i16,
     in_check: bool,
     searched_moves: usize,
@@ -569,6 +572,7 @@ fn search_child<E: Evaluator>(
         mv,
         tt_move,
         quiet,
+        reducible_capture,
         in_check,
         depth,
         history_score,
@@ -580,7 +584,13 @@ fn search_child<E: Evaluator>(
             ctx.telemetry.lmr_attempts += 1;
         }
         let reduced_depth =
-            child_depth.saturating_sub(lmr_reduction(depth, searched_moves, node, history_score));
+            child_depth.saturating_sub(lmr_reduction(
+                depth,
+                searched_moves,
+                node,
+                history_score,
+                reducible_capture,
+            ));
         let score = -search_node(
             pos,
             reduced_depth,

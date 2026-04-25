@@ -16,8 +16,13 @@ use crate::selectivity::{
     should_prune_futility, should_prune_late_quiet, should_prune_reverse_futility,
     should_reduce_lmr, should_try_null_move, should_try_probcut, should_try_razoring,
 };
-use crate::tune::{PROBCUT_MIN_DEPTH, PVS_FULL_WINDOW_MOVES};
+use crate::tune::{PROBCUT_MIN_DEPTH, PVS_FULL_WINDOW_MOVES, scale_eval};
 use crate::types::{is_mate_score, mate_score};
+
+const LATE_BAD_CAPTURE_MIN_DEPTH: u8 = 3;
+const LATE_BAD_CAPTURE_MAX_DEPTH: u8 = 8;
+const LATE_BAD_CAPTURE_MIN_SEARCHED: usize = 4;
+const LATE_BAD_CAPTURE_MAX_GAIN: i32 = 330;
 
 fn try_probcut<E: Evaluator>(
     pos: &mut Position,
@@ -381,6 +386,20 @@ pub(crate) fn search_node<E: Evaluator>(
             continue;
         }
 
+        if should_prune_late_bad_capture(
+            pos,
+            mv,
+            tt_move,
+            maybe_check,
+            depth,
+            searched_moves,
+            alpha,
+            static_eval,
+            can_selectively_prune,
+        ) {
+            continue;
+        }
+
         evaluator.push_move(pos, mv);
         pos.make_move(mv);
         let score = match search_child(
@@ -523,6 +542,50 @@ fn should_update_correction(
         && raw_static_eval != NO_STATIC_EVAL
         && !is_mate_score(score)
         && !is_mate_score(i32::from(raw_static_eval))
+}
+
+#[inline(always)]
+fn should_prune_late_bad_capture(
+    pos: &Position,
+    mv: Move,
+    tt_move: Move,
+    maybe_check: bool,
+    depth: u8,
+    searched_moves: usize,
+    alpha: i32,
+    static_eval: i32,
+    can_selectively_prune: bool,
+) -> bool {
+    let kind = mv.kind();
+    if !can_selectively_prune
+        || depth < LATE_BAD_CAPTURE_MIN_DEPTH
+        || depth > LATE_BAD_CAPTURE_MAX_DEPTH
+        || searched_moves < LATE_BAD_CAPTURE_MIN_SEARCHED
+        || mv == tt_move
+        || maybe_check
+        || kind == MoveKind::EnPassant
+        || kind.is_promotion()
+        || !kind.is_capture()
+        || is_mate_score(alpha)
+        || see_ge(pos, mv, 0)
+    {
+        return false;
+    }
+
+    let captured = pos.piece_at(mv.to()).map_or(Piece::Pawn, |(piece, _)| piece);
+    static_eval + scale_eval(LATE_BAD_CAPTURE_MAX_GAIN.min(piece_value(captured))) <= alpha
+}
+
+#[inline(always)]
+const fn piece_value(piece: Piece) -> i32 {
+    match piece {
+        Piece::Pawn => 100,
+        Piece::Knight => 320,
+        Piece::Bishop => 330,
+        Piece::Rook => 500,
+        Piece::Queen => 900,
+        Piece::King => 0,
+    }
 }
 
 fn capture_history_record(pos: &Position, mv: Move) -> Option<CaptureHistoryRecord> {

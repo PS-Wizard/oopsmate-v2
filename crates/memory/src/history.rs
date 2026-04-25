@@ -40,7 +40,9 @@ impl HistoryTable {
     #[inline(always)]
     fn update(&mut self, side: Color, mv: Move, delta: i32) {
         let slot = &mut self.quiet[side.index()][index(mv)];
-        *slot = (slot.saturating_add(delta)).clamp(-HISTORY_LIMIT, HISTORY_LIMIT);
+        let bonus = delta.clamp(-HISTORY_LIMIT, HISTORY_LIMIT);
+        *slot += bonus - *slot * bonus.abs() / HISTORY_LIMIT;
+        *slot = (*slot).clamp(-HISTORY_LIMIT, HISTORY_LIMIT);
     }
 }
 
@@ -104,5 +106,40 @@ mod tests {
         history.penalize_quiet_fail(Color::White, mv, 4);
 
         assert_eq!(history.score(Color::White, mv), 28);
+    }
+
+    #[test]
+    fn gravity_update_soft_saturates_repeated_rewards() {
+        let mv = Move::new(
+            Square::from_algebraic("g1").unwrap(),
+            Square::from_algebraic("f3").unwrap(),
+            MoveKind::Quiet,
+        );
+        let mut history = HistoryTable::new();
+
+        for _ in 0..400 {
+            history.reward_quiet_cutoff(Color::White, mv, 16);
+        }
+
+        assert!(history.score(Color::White, mv) <= HISTORY_LIMIT as i16);
+        assert!(history.score(Color::White, mv) > 16_000);
+    }
+
+    #[test]
+    fn gravity_update_pulls_overconfident_scores_down() {
+        let mv = Move::new(
+            Square::from_algebraic("g1").unwrap(),
+            Square::from_algebraic("f3").unwrap(),
+            MoveKind::Quiet,
+        );
+        let mut history = HistoryTable::new();
+
+        for _ in 0..400 {
+            history.reward_quiet_cutoff(Color::White, mv, 16);
+        }
+        let before = history.score(Color::White, mv);
+        history.penalize_quiet_fail(Color::White, mv, 16);
+
+        assert!(history.score(Color::White, mv) < before - 250);
     }
 }

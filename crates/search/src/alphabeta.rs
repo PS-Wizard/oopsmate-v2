@@ -2,18 +2,19 @@ use oopsmate_core::{Move, MoveKind, Piece, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
 use oopsmate_movegen::{
-    analyze, generate_captures_promotions_with_analysis, might_give_check, see_ge, MoveList,
-    MAX_MOVES,
+    MAX_MOVES, MoveList, analyze, generate_captures_promotions_with_analysis, might_give_check,
+    see_ge,
 };
 
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::picker::{MovePicker, TtMode};
-use crate::qsearch::{qsearch, NO_STATIC_EVAL};
+use crate::qsearch::{NO_STATIC_EVAL, qsearch};
 use crate::selectivity::{
-    can_use_selective_pruning, futility_margin, is_quiet_move, lmr_reduction, needs_static_eval,
-    null_move_depth, probcut_beta, probcut_depth, razor_margin, rfp_margin, should_apply_iir,
-    should_prune_futility, should_prune_late_quiet, should_prune_reverse_futility,
-    should_reduce_lmr, should_try_null_move, should_try_probcut, should_try_razoring, NodeState,
+    NodeState, can_use_selective_pruning, futility_margin, is_quiet_move, lmr_reduction,
+    needs_static_eval, null_move_depth, probcut_beta, probcut_depth, razor_margin, rfp_margin,
+    should_apply_iir, should_prune_futility, should_prune_late_quiet,
+    should_prune_reverse_futility, should_reduce_lmr, should_try_null_move, should_try_probcut,
+    should_try_razoring,
 };
 use crate::tune::{PROBCUT_MIN_DEPTH, PVS_FULL_WINDOW_MOVES};
 use crate::types::{is_mate_score, mate_score};
@@ -187,7 +188,7 @@ pub(crate) fn search_node<E: Evaluator>(
     let need_probcut_eval =
         !node.pv_node && !in_check && depth >= PROBCUT_MIN_DEPTH && !is_mate_score(beta);
     let static_eval = if needs_static_eval(depth, can_selectively_prune) || need_probcut_eval {
-        if stored_static_eval != NO_STATIC_EVAL {
+        let raw_static_eval = if stored_static_eval != NO_STATIC_EVAL {
             #[cfg(feature = "telemetry")]
             {
                 ctx.telemetry.tt_static_eval_reuses += 1;
@@ -201,7 +202,11 @@ pub(crate) fn search_node<E: Evaluator>(
             let score = evaluator.evaluate(pos);
             stored_static_eval = pack_static_eval(score);
             score
-        }
+        };
+        raw_static_eval
+            + ctx
+                .history
+                .correction_score(pos.side_to_move(), pos.pawn_hash())
     } else {
         0
     };
@@ -476,6 +481,14 @@ pub(crate) fn search_node<E: Evaluator>(
     } else {
         Bound::Exact
     };
+    if should_update_correction(bound, in_check, best_score, stored_static_eval) {
+        ctx.history.update_correction(
+            side,
+            pos.pawn_hash(),
+            best_score - i32::from(stored_static_eval),
+            depth,
+        );
+    }
     ctx.tt.store(
         hash,
         node.ply,
@@ -497,6 +510,19 @@ fn pack_static_eval(score: i32) -> i16 {
 }
 
 #[inline(always)]
+fn should_update_correction(
+    bound: Bound,
+    in_check: bool,
+    score: i32,
+    raw_static_eval: i16,
+) -> bool {
+    bound == Bound::Exact
+        && !in_check
+        && raw_static_eval != NO_STATIC_EVAL
+        && !is_mate_score(score)
+        && !is_mate_score(i32::from(raw_static_eval))
+}
+
 fn capture_history_record(pos: &Position, mv: Move) -> Option<CaptureHistoryRecord> {
     let kind = mv.kind();
     if kind.is_promotion() || !(kind.is_capture() || kind == MoveKind::EnPassant) {

@@ -11,6 +11,14 @@ fn startpos_has_expected_kings_and_hash() {
     assert_eq!(pos.board.king_square(Color::White), sq("e1"));
     assert_eq!(pos.board.king_square(Color::Black), sq("e8"));
     assert_eq!(pos.hash(), pos.compute_hash());
+    assert_ne!(pos.pawn_hash(), 0);
+}
+
+#[test]
+fn pawn_hash_ignores_non_pawn_state() {
+    let a = Position::from_fen("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1").unwrap();
+    let b = Position::from_fen("4k3/8/8/8/8/8/4P3/R3K2R b KQ - 7 19").unwrap();
+    assert_eq!(a.pawn_hash(), b.pawn_hash());
 }
 
 #[test]

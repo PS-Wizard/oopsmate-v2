@@ -3,11 +3,14 @@ use oopsmate_core::{Color, Move, Piece};
 const HISTORY_SIZE: usize = 64 * 64;
 const HISTORY_LIMIT: i32 = 16_384;
 const CAPTURE_HISTORY_SIZE: usize = 2 * 6 * 64 * 6;
+const CORRECTION_SIZE: usize = 16_384;
+const CORRECTION_LIMIT: i32 = 1_024;
 
 #[derive(Debug)]
 pub struct HistoryTable {
     quiet: [[i32; HISTORY_SIZE]; 2],
     capture: [i32; CAPTURE_HISTORY_SIZE],
+    correction: [[i32; CORRECTION_SIZE]; 2],
 }
 
 impl HistoryTable {
@@ -16,6 +19,7 @@ impl HistoryTable {
         Self {
             quiet: [[0; HISTORY_SIZE]; 2],
             capture: [0; CAPTURE_HISTORY_SIZE],
+            correction: [[0; CORRECTION_SIZE]; 2],
         }
     }
 
@@ -23,6 +27,7 @@ impl HistoryTable {
     pub fn clear(&mut self) {
         self.quiet = [[0; HISTORY_SIZE]; 2];
         self.capture = [0; CAPTURE_HISTORY_SIZE];
+        self.correction = [[0; CORRECTION_SIZE]; 2];
     }
 
     #[inline(always)]
@@ -82,6 +87,23 @@ impl HistoryTable {
             -history_bonus(depth) / 2,
         );
     }
+
+    #[inline(always)]
+    #[must_use]
+    pub fn correction_score(&self, side: Color, pawn_hash: u64) -> i32 {
+        self.correction[side.index()][correction_index(pawn_hash)]
+    }
+
+    #[inline(always)]
+    pub fn update_correction(&mut self, side: Color, pawn_hash: u64, error: i32, depth: u8) {
+        let depth = i32::from(depth.min(16));
+        let delta = (error.saturating_mul(depth) / 16).clamp(-CORRECTION_LIMIT, CORRECTION_LIMIT);
+        gravity_update_limited(
+            &mut self.correction[side.index()][correction_index(pawn_hash)],
+            delta,
+            CORRECTION_LIMIT,
+        );
+    }
 }
 
 impl Default for HistoryTable {
@@ -92,9 +114,14 @@ impl Default for HistoryTable {
 
 #[inline(always)]
 fn gravity_update(slot: &mut i32, delta: i32) {
-    let bonus = delta.clamp(-HISTORY_LIMIT, HISTORY_LIMIT);
-    *slot += bonus - *slot * bonus.abs() / HISTORY_LIMIT;
-    *slot = (*slot).clamp(-HISTORY_LIMIT, HISTORY_LIMIT);
+    gravity_update_limited(slot, delta, HISTORY_LIMIT);
+}
+
+#[inline(always)]
+fn gravity_update_limited(slot: &mut i32, delta: i32, limit: i32) {
+    let bonus = delta.clamp(-limit, limit);
+    *slot += bonus - *slot * bonus.abs() / limit;
+    *slot = (*slot).clamp(-limit, limit);
 }
 
 #[inline(always)]
@@ -111,6 +138,11 @@ const fn index(mv: Move) -> usize {
 #[inline(always)]
 const fn capture_index(side: Color, moved: Piece, to: usize, captured: Piece) -> usize {
     (((side.index() * 6 + moved.index()) * 64 + to) * 6) + captured.index()
+}
+
+#[inline(always)]
+const fn correction_index(pawn_hash: u64) -> usize {
+    pawn_hash as usize & (CORRECTION_SIZE - 1)
 }
 
 #[inline(always)]
@@ -211,5 +243,30 @@ mod tests {
             history.capture_score(Color::Black, Piece::Knight, 42, Piece::Pawn),
             0
         );
+    }
+
+    #[test]
+    fn correction_history_is_side_and_pawn_hash_indexed() {
+        let mut history = HistoryTable::new();
+        let pawn_hash = 0x1234_5678_9abc_def0;
+
+        assert_eq!(history.correction_score(Color::White, pawn_hash), 0);
+        history.update_correction(Color::White, pawn_hash, 256, 8);
+
+        assert_eq!(history.correction_score(Color::White, pawn_hash), 128);
+        assert_eq!(history.correction_score(Color::Black, pawn_hash), 0);
+    }
+
+    #[test]
+    fn correction_history_is_bounded() {
+        let mut history = HistoryTable::new();
+        let pawn_hash = 0x55aa;
+
+        for _ in 0..400 {
+            history.update_correction(Color::White, pawn_hash, 4096, 16);
+        }
+
+        assert!(history.correction_score(Color::White, pawn_hash) <= CORRECTION_LIMIT);
+        assert!(history.correction_score(Color::White, pawn_hash) > 1000);
     }
 }

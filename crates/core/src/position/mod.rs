@@ -5,8 +5,8 @@ mod tests;
 mod unmake;
 
 use crate::board::Board;
-use crate::hash::{castling_key, ep_key, piece_key, SIDE_KEY};
-use crate::types::{CastlingRights, Color, Piece, Square};
+use crate::hash::{SIDE_KEY, castling_key, ep_key, piece_key, piece_key_nonempty};
+use crate::types::{CastlingRights, Color, Piece, Square, encode_piece};
 use crate::undo::{RepetitionStack, UndoStack};
 
 pub const STARTPOS_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -112,6 +112,14 @@ impl Position {
     }
 
     #[must_use]
+    pub fn pawn_hash(&self) -> u64 {
+        let mut hash = 0u64;
+        hash ^= pawn_hash_for_side(&self.board, Color::White);
+        hash ^= pawn_hash_for_side(&self.board, Color::Black);
+        hash
+    }
+
+    #[must_use]
     pub fn compute_hash(&self) -> u64 {
         // This is intentionally the slow full recomputation path used for setup
         // and validation. Normal move making keeps the hash incrementally.
@@ -167,4 +175,19 @@ impl Default for Position {
     fn default() -> Self {
         Self::startpos()
     }
+}
+
+#[inline(always)]
+fn pawn_hash_for_side(board: &Board, color: Color) -> u64 {
+    let piece_code = encode_piece(Piece::Pawn, color);
+    let mut pawns = board.piece_bb(Piece::Pawn) & board.color_bb(color);
+    let mut hash = 0u64;
+
+    while pawns != 0 {
+        let square = Square::from_raw(pawns.trailing_zeros() as u8);
+        hash ^= piece_key_nonempty(piece_code, square);
+        pawns &= pawns - 1;
+    }
+
+    hash
 }

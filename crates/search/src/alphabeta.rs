@@ -117,9 +117,11 @@ pub(crate) fn search_node<E: Evaluator>(
     let hash = pos.hash();
     let alpha_orig = alpha;
     let mut tt_move = Move::NULL;
+    let mut stored_static_eval = NO_STATIC_EVAL;
 
     if let Some(hit) = ctx.tt.probe(hash, node.ply) {
         tt_move = hit.best_move;
+        stored_static_eval = hit.static_eval;
         if hit.depth >= depth {
             match hit.bound {
                 Bound::Exact => return Ok(hit.score),
@@ -136,7 +138,13 @@ pub(crate) fn search_node<E: Evaluator>(
     let need_probcut_eval =
         !node.pv_node && !in_check && depth >= PROBCUT_MIN_DEPTH && !is_mate_score(beta);
     let static_eval = if needs_static_eval(depth, can_selectively_prune) || need_probcut_eval {
-        evaluator.evaluate(pos)
+        if stored_static_eval != NO_STATIC_EVAL {
+            i32::from(stored_static_eval)
+        } else {
+            let score = evaluator.evaluate(pos);
+            stored_static_eval = pack_static_eval(score);
+            score
+        }
     } else {
         0
     };
@@ -164,7 +172,7 @@ pub(crate) fn search_node<E: Evaluator>(
             node.ply,
             Move::NULL,
             score,
-            NO_STATIC_EVAL,
+            stored_static_eval,
             depth,
             Bound::Lower,
         );
@@ -199,7 +207,7 @@ pub(crate) fn search_node<E: Evaluator>(
                 node.ply,
                 Move::NULL,
                 beta,
-                NO_STATIC_EVAL,
+                stored_static_eval,
                 depth,
                 Bound::Lower,
             );
@@ -218,7 +226,7 @@ pub(crate) fn search_node<E: Evaluator>(
                 node.ply,
                 mv,
                 score,
-                NO_STATIC_EVAL,
+                stored_static_eval,
                 depth,
                 Bound::Lower,
             );
@@ -329,7 +337,7 @@ pub(crate) fn search_node<E: Evaluator>(
                 node.ply,
                 mv,
                 score,
-                NO_STATIC_EVAL,
+                stored_static_eval,
                 depth,
                 Bound::Lower,
             );
@@ -348,7 +356,7 @@ pub(crate) fn search_node<E: Evaluator>(
             node.ply,
             Move::NULL,
             score,
-            NO_STATIC_EVAL,
+            stored_static_eval,
             depth,
             Bound::Exact,
         );
@@ -365,12 +373,19 @@ pub(crate) fn search_node<E: Evaluator>(
         node.ply,
         best_move,
         best_score,
-        NO_STATIC_EVAL,
+        stored_static_eval,
         depth,
         bound,
     );
 
     Ok(best_score)
+}
+
+#[inline(always)]
+#[must_use]
+fn pack_static_eval(score: i32) -> i16 {
+    debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
+    score as i16
 }
 
 #[inline(always)]

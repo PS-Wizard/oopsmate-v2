@@ -1,19 +1,99 @@
-use oopsmate_core::{Move, Position};
+use oopsmate_core::{Move, MoveKind, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
-use oopsmate_movegen::{analyze, might_give_check, MAX_MOVES};
+use oopsmate_movegen::{
+    analyze, generate_captures_promotions_with_analysis, might_give_check, see_ge, MoveList,
+    MAX_MOVES,
+};
 
 use crate::control::{SearchContext, SearchInterrupted};
 use crate::picker::{MovePicker, TtMode};
 use crate::qsearch::{qsearch, NO_STATIC_EVAL};
 use crate::selectivity::{
     can_use_selective_pruning, futility_margin, is_quiet_move, lmr_reduction, needs_static_eval,
-    null_move_depth, razor_margin, rfp_margin, should_prune_futility, should_prune_late_quiet,
-    should_prune_reverse_futility, should_reduce_lmr, should_try_null_move, should_try_razoring,
-    NodeState,
+    null_move_depth, probcut_beta, probcut_depth, razor_margin, rfp_margin, should_prune_futility,
+    should_prune_late_quiet, should_prune_reverse_futility, should_reduce_lmr,
+    should_try_null_move, should_try_probcut, should_try_razoring, NodeState,
 };
-use crate::tune::PVS_FULL_WINDOW_MOVES;
-use crate::types::mate_score;
+use crate::tune::{PROBCUT_MIN_DEPTH, PVS_FULL_WINDOW_MOVES};
+use crate::types::{is_mate_score, mate_score};
+
+fn try_probcut<E: Evaluator>(
+    pos: &mut Position,
+    analysis: &oopsmate_movegen::Analysis,
+    depth: u8,
+    node: NodeState,
+    beta: i32,
+    ctx: &mut SearchContext<'_>,
+    evaluator: &mut E,
+) -> Result<Option<(Move, i32)>, SearchInterrupted> {
+    let prob_beta = probcut_beta(beta);
+    let reduced_depth = probcut_depth(depth);
+    let mut moves = MoveList::new();
+    generate_captures_promotions_with_analysis(pos, analysis, &mut moves);
+
+    for &mv in moves.as_slice() {
+        if !probcut_candidate(pos, mv) {
+            continue;
+        }
+
+        evaluator.push_move(pos, mv);
+        pos.make_move(mv);
+
+        let qscore = match qsearch(
+            pos,
+            node.ply + 1,
+            -prob_beta,
+            -prob_beta + 1,
+            ctx,
+            evaluator,
+        ) {
+            Ok(score) => -score,
+            Err(err) => {
+                pos.unmake_move(mv);
+                evaluator.pop_move();
+                return Err(err);
+            }
+        };
+
+        let score = if qscore >= prob_beta && reduced_depth > 0 {
+            match search_node(
+                pos,
+                reduced_depth,
+                node.child(false, -prob_beta, -prob_beta + 1),
+                -prob_beta,
+                -prob_beta + 1,
+                ctx,
+                evaluator,
+            ) {
+                Ok(score) => -score,
+                Err(err) => {
+                    pos.unmake_move(mv);
+                    evaluator.pop_move();
+                    return Err(err);
+                }
+            }
+        } else {
+            qscore
+        };
+
+        pos.unmake_move(mv);
+        evaluator.pop_move();
+
+        if score >= prob_beta {
+            return Ok(Some((mv, beta)));
+        }
+    }
+
+    Ok(None)
+}
+
+#[inline(always)]
+fn probcut_candidate(pos: &Position, mv: Move) -> bool {
+    let kind = mv.kind();
+    kind.is_promotion()
+        || ((kind.is_capture() || kind == MoveKind::EnPassant) && see_ge(pos, mv, 0))
+}
 
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
@@ -53,7 +133,9 @@ pub(crate) fn search_node<E: Evaluator>(
     let analysis = analyze(pos);
     let in_check = analysis.in_check();
     let can_selectively_prune = can_use_selective_pruning(pos, node, alpha, beta, in_check);
-    let static_eval = if needs_static_eval(depth, can_selectively_prune) {
+    let need_probcut_eval =
+        !node.pv_node && !in_check && depth >= PROBCUT_MIN_DEPTH && !is_mate_score(beta);
+    let static_eval = if needs_static_eval(depth, can_selectively_prune) || need_probcut_eval {
         evaluator.evaluate(pos)
     } else {
         0
@@ -122,6 +204,21 @@ pub(crate) fn search_node<E: Evaluator>(
                 Bound::Lower,
             );
             return Ok(beta);
+        }
+    }
+
+    if should_try_probcut(depth, node, beta, in_check, static_eval) {
+        if let Some((mv, score)) = try_probcut(pos, &analysis, depth, node, beta, ctx, evaluator)? {
+            ctx.tt.store(
+                hash,
+                node.ply,
+                mv,
+                score,
+                NO_STATIC_EVAL,
+                depth,
+                Bound::Lower,
+            );
+            return Ok(score);
         }
     }
 

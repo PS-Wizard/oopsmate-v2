@@ -5,8 +5,9 @@ use crate::tune::{
     FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, LATE_QUIET_PRUNE_MAX_DEPTH,
     LATE_QUIET_PRUNE_MIN_DEPTH, LATE_QUIET_PRUNE_MOVE_MULT, LATE_QUIET_PRUNE_MOVE_OFFSET,
     LMR_FULL_DEPTH_MOVES, LMR_HISTORY_BAD, LMR_HISTORY_GOOD, LMR_MIN_DEPTH, NULL_MOVE_MIN_DEPTH,
-    RAZOR_MARGIN_1, RAZOR_MARGIN_2, RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2,
-    RFP_MARGIN_3, RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
+    PROBCUT_MARGIN, PROBCUT_MIN_DEPTH, PROBCUT_REDUCTION, RAZOR_MARGIN_1, RAZOR_MARGIN_2,
+    RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3, RFP_MARGIN_4,
+    RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
 };
 use crate::types::is_mate_score;
 
@@ -109,6 +110,31 @@ pub(crate) fn should_try_null_move(
     can_selectively_prune: bool,
 ) -> bool {
     can_selectively_prune && depth >= NULL_MOVE_MIN_DEPTH && static_eval >= beta
+}
+
+#[inline(always)]
+pub(crate) fn should_try_probcut(
+    depth: u8,
+    node: NodeState,
+    beta: i32,
+    in_check: bool,
+    static_eval: i32,
+) -> bool {
+    !node.pv_node
+        && !in_check
+        && !is_mate_score(beta)
+        && depth >= PROBCUT_MIN_DEPTH
+        && static_eval >= beta - PROBCUT_MARGIN
+}
+
+#[inline(always)]
+pub(crate) const fn probcut_beta(beta: i32) -> i32 {
+    beta + PROBCUT_MARGIN
+}
+
+#[inline(always)]
+pub(crate) const fn probcut_depth(depth: u8) -> u8 {
+    depth.saturating_sub(PROBCUT_REDUCTION)
 }
 
 #[inline(always)]
@@ -261,5 +287,11 @@ mod tests {
     fn bad_history_increases_lmr() {
         let non_pv = NodeState::new(1, false, -1, 0);
         assert_eq!(lmr_reduction(8, 8, non_pv, -64), 4);
+    }
+
+    #[test]
+    fn probcut_uses_configured_reduction() {
+        assert_eq!(probcut_depth(5), 1);
+        assert_eq!(probcut_depth(8), 4);
     }
 }

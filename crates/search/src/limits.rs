@@ -72,14 +72,14 @@ impl SearchLimits {
         let mut soft_ms = if let Some(movestogo) = clock.movestogo.filter(|&value| value > 0) {
             usable_ms / movestogo + increment_ms / 2
         } else {
-            usable_ms / 25 + increment_ms / 2
+            usable_ms / 12 + increment_ms * 3 / 4
         };
 
         if usable_ms > 0 {
             soft_ms = soft_ms.clamp(1, usable_ms);
         }
 
-        let hard_ms = (soft_ms + soft_ms / 4).min(time_left_ms.saturating_sub(1).max(soft_ms));
+        let hard_ms = (soft_ms + soft_ms / 2).min(time_left_ms.saturating_sub(1).max(soft_ms));
 
         (
             Some(Duration::from_millis(soft_ms)),

@@ -235,11 +235,11 @@ pub(crate) const fn lmr_reduction(
     node: NodeState,
     history_score: i16,
 ) -> u8 {
-    let mut reduction = if depth >= 12 && searched_moves >= 16 {
+    let mut reduction = if depth >= 10 && searched_moves >= 12 {
         4
-    } else if depth >= 8 && searched_moves >= 8 {
+    } else if depth >= 7 && searched_moves >= 6 {
         3
-    } else if depth >= 5 && searched_moves >= 4 {
+    } else if depth >= 5 && searched_moves >= 3 {
         2
     } else {
         1

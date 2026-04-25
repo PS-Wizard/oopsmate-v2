@@ -10,6 +10,10 @@ description.workspace = true
 name = "oopsmate_search"
 path = "src/lib.rs"
 
+[features]
+default = []
+telemetry = []
+
 [dependencies]
 oopsmate-core = { path = "../core" }
 oopsmate-eval = { path = "../eval" }

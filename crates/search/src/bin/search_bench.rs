@@ -5,7 +5,9 @@ use oopsmate_core::{Move, MoveKind, Piece, Position};
 use oopsmate_eval::NnueEval;
 use oopsmate_memory::SearchMemory;
 use oopsmate_movegen::PERFT_CASES;
-use oopsmate_search::{SearchLimits, search};
+#[cfg(feature = "telemetry")]
+use oopsmate_search::SearchTelemetry;
+use oopsmate_search::{search, SearchLimits};
 
 const DEFAULT_DEPTH: u8 = 5;
 const DEFAULT_RUNS: usize = 3;
@@ -30,6 +32,8 @@ fn main() {
     let mut evaluator = NnueEval::load_default().expect("load NNUE networks");
     let mut total_nodes = 0u64;
     let mut total_nanos = 0u128;
+    #[cfg(feature = "telemetry")]
+    let mut total_telemetry = SearchTelemetry::default();
 
     println!("search benchmark depth={depth} runs={runs} tt={tt_mib}MiB");
     println!(
@@ -56,6 +60,8 @@ fn main() {
 
             total_nodes += result.nodes;
             total_nanos += nanos;
+            #[cfg(feature = "telemetry")]
+            total_telemetry.add(result.telemetry);
 
             println!(
                 "{:<10} {:>5} {:>12} {:>10.3} {:>12} {:>8} {:>8}",
@@ -78,6 +84,38 @@ fn main() {
         total_nodes,
         total_nanos as f64 / 1_000_000.0,
         total_nps
+    );
+
+    #[cfg(feature = "telemetry")]
+    print_telemetry(total_telemetry);
+}
+
+#[cfg(feature = "telemetry")]
+fn print_telemetry(t: SearchTelemetry) {
+    println!("telemetry:");
+    println!(
+        "  main_nodes={} q_nodes={} eval_calls={}",
+        t.main_nodes, t.q_nodes, t.eval_calls
+    );
+    println!(
+        "  tt_hits={} tt_cutoffs={} tt_static_eval_reuses={}",
+        t.tt_hits, t.tt_cutoffs, t.tt_static_eval_reuses
+    );
+    println!(
+        "  razor_cutoffs={} rfp_cutoffs={} futility_skips={} late_quiet_skips={}",
+        t.razor_cutoffs, t.rfp_cutoffs, t.futility_skips, t.late_quiet_skips
+    );
+    println!(
+        "  null_attempts={} null_cutoffs={} probcut_attempts={} probcut_qsearch_passes={} probcut_cutoffs={}",
+        t.null_attempts,
+        t.null_cutoffs,
+        t.probcut_attempts,
+        t.probcut_qsearch_passes,
+        t.probcut_cutoffs
+    );
+    println!(
+        "  lmr_attempts={} lmr_cutoffs={} lmr_researches={}",
+        t.lmr_attempts, t.lmr_cutoffs, t.lmr_researches
     );
 }
 

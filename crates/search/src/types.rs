@@ -1,5 +1,8 @@
 use oopsmate_core::Move;
 
+#[cfg(feature = "telemetry")]
+use crate::telemetry::SearchTelemetry;
+
 pub const MATE_SCORE: i32 = 30_000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -9,6 +12,8 @@ pub struct SearchResult {
     pub depth: u8,
     pub nodes: u64,
     pub time_ms: u64,
+    #[cfg(feature = "telemetry")]
+    pub telemetry: SearchTelemetry,
 }
 
 #[inline(always)]

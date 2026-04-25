@@ -10,7 +10,7 @@ use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
 use crate::selectivity::NodeState;
 use crate::tune::{
-    ASPIRATION_MAX_WINDOW, ASPIRATION_MIN_DEPTH, ASPIRATION_WINDOW, MAX_SEARCH_DEPTH, scale_eval,
+    scale_eval, ASPIRATION_MAX_WINDOW, ASPIRATION_MIN_DEPTH, ASPIRATION_WINDOW, MAX_SEARCH_DEPTH,
 };
 use crate::types::{is_mate_score, mate_score, SearchResult};
 
@@ -66,6 +66,8 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
             depth: 0,
             nodes: 0,
             time_ms: ctx.elapsed_ms(),
+            #[cfg(feature = "telemetry")]
+            telemetry: ctx.telemetry,
         };
     }
 
@@ -83,6 +85,8 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
         depth: 0,
         nodes: 0,
         time_ms: 0,
+        #[cfg(feature = "telemetry")]
+        telemetry: ctx.telemetry,
     };
 
     if max_depth == 0 {
@@ -110,6 +114,10 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
                 best.depth = depth;
                 best.nodes = ctx.nodes();
                 best.time_ms = ctx.elapsed_ms();
+                #[cfg(feature = "telemetry")]
+                {
+                    best.telemetry = ctx.telemetry;
+                }
                 report(&best);
             }
             Err(_) => break,
@@ -124,6 +132,10 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
 
     best.nodes = ctx.nodes();
     best.time_ms = ctx.elapsed_ms();
+    #[cfg(feature = "telemetry")]
+    {
+        best.telemetry = ctx.telemetry;
+    }
     best
 }
 

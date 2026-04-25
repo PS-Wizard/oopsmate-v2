@@ -5,6 +5,8 @@ use oopsmate_core::Color;
 use oopsmate_memory::{HistoryTable, TranspositionTable};
 
 use crate::limits::SearchLimits;
+#[cfg(feature = "telemetry")]
+use crate::telemetry::SearchTelemetry;
 
 pub(crate) struct SearchContext<'a> {
     pub(crate) tt: &'a mut TranspositionTable,
@@ -14,6 +16,8 @@ pub(crate) struct SearchContext<'a> {
     soft_deadline: Option<Instant>,
     hard_deadline: Option<Instant>,
     nodes: u64,
+    #[cfg(feature = "telemetry")]
+    pub(crate) telemetry: SearchTelemetry,
 }
 
 pub(crate) struct SearchInterrupted;
@@ -38,6 +42,8 @@ impl<'a> SearchContext<'a> {
             soft_deadline: soft_limit.map(|limit| start + limit),
             hard_deadline: hard_limit.map(|limit| start + limit),
             nodes: 0,
+            #[cfg(feature = "telemetry")]
+            telemetry: SearchTelemetry::default(),
         }
     }
 

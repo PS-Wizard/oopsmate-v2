@@ -2,12 +2,12 @@ use oopsmate_core::{Move, MoveKind, Piece, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
 use oopsmate_movegen::{
-    Analysis, MoveList, analyze, generate_captures_promotions_with_analysis,
-    generate_evasions_with_analysis, see_ge,
+    analyze, generate_captures_promotions_with_analysis, generate_evasions_with_analysis, see_ge,
+    Analysis, MoveList,
 };
 
 use crate::control::{SearchContext, SearchInterrupted};
-use crate::tune::{QSEARCH_CAPTURE_BASE, QSEARCH_DELTA_MARGIN, QSEARCH_PROMOTION_BASE, scale_eval};
+use crate::tune::{scale_eval, QSEARCH_CAPTURE_BASE, QSEARCH_DELTA_MARGIN, QSEARCH_PROMOTION_BASE};
 use crate::types::{is_mate_score, mate_score};
 
 pub(crate) const NO_STATIC_EVAL: i16 = i16::MIN;
@@ -21,6 +21,10 @@ pub(crate) fn qsearch<E: Evaluator>(
     evaluator: &mut E,
 ) -> Result<i32, SearchInterrupted> {
     ctx.enter_node()?;
+    #[cfg(feature = "telemetry")]
+    {
+        ctx.telemetry.q_nodes += 1;
+    }
 
     if pos.rule50() >= 100 || pos.is_repetition() {
         return Ok(0);
@@ -32,15 +36,37 @@ pub(crate) fn qsearch<E: Evaluator>(
     let mut tt_static_eval = None;
 
     if let Some(hit) = ctx.tt.probe(hash, ply) {
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.tt_hits += 1;
+        }
         tt_move = hit.best_move;
         if hit.static_eval != NO_STATIC_EVAL {
             tt_static_eval = Some(i32::from(hit.static_eval));
         }
 
         match hit.bound {
-            Bound::Exact => return Ok(hit.score),
-            Bound::Lower if hit.score >= beta => return Ok(hit.score),
-            Bound::Upper if hit.score <= alpha => return Ok(hit.score),
+            Bound::Exact => {
+                #[cfg(feature = "telemetry")]
+                {
+                    ctx.telemetry.tt_cutoffs += 1;
+                }
+                return Ok(hit.score);
+            }
+            Bound::Lower if hit.score >= beta => {
+                #[cfg(feature = "telemetry")]
+                {
+                    ctx.telemetry.tt_cutoffs += 1;
+                }
+                return Ok(hit.score);
+            }
+            Bound::Upper if hit.score <= alpha => {
+                #[cfg(feature = "telemetry")]
+                {
+                    ctx.telemetry.tt_cutoffs += 1;
+                }
+                return Ok(hit.score);
+            }
             _ => {}
         }
     }
@@ -51,7 +77,19 @@ pub(crate) fn qsearch<E: Evaluator>(
         return qsearch_evasions(pos, &analysis, tt_move, ply, alpha, beta, ctx, evaluator);
     }
 
-    let static_eval = tt_static_eval.unwrap_or_else(|| evaluator.evaluate(pos));
+    let static_eval = if let Some(score) = tt_static_eval {
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.tt_static_eval_reuses += 1;
+        }
+        score
+    } else {
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.eval_calls += 1;
+        }
+        evaluator.evaluate(pos)
+    };
     let mut best_move = Move::NULL;
     let mut best_score = static_eval;
 
@@ -321,10 +359,7 @@ fn delta_prune_move(pos: &Position, mv: Move, static_eval: i32, alpha: i32) -> b
 
 #[inline(always)]
 fn see_prune_move(pos: &Position, mv: Move) -> bool {
-    mv.is_capture()
-        && !mv.is_promotion()
-        && mv.kind() != MoveKind::EnPassant
-        && !see_ge(pos, mv, 0)
+    mv.is_capture() && !mv.is_promotion() && mv.kind() != MoveKind::EnPassant && !see_ge(pos, mv, 0)
 }
 
 #[inline(always)]
@@ -360,7 +395,8 @@ fn captured_piece(pos: &Position, mv: Move) -> Piece {
     if ((mv.0 >> 12) as u8) == MoveKind::EnPassant as u8 {
         Piece::Pawn
     } else {
-        pos.piece_at(mv.to()).map_or(Piece::Pawn, |(piece, _)| piece)
+        pos.piece_at(mv.to())
+            .map_or(Piece::Pawn, |(piece, _)| piece)
     }
 }
 

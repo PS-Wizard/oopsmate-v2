@@ -57,6 +57,10 @@ fn try_probcut<E: Evaluator>(
         };
 
         let score = if qscore >= prob_beta && reduced_depth > 0 {
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.probcut_qsearch_passes += 1;
+            }
             match search_node(
                 pos,
                 reduced_depth,
@@ -81,6 +85,10 @@ fn try_probcut<E: Evaluator>(
         evaluator.pop_move();
 
         if score >= prob_beta {
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.probcut_cutoffs += 1;
+            }
             return Ok(Some((mv, beta)));
         }
     }
@@ -109,6 +117,10 @@ pub(crate) fn search_node<E: Evaluator>(
     }
 
     ctx.enter_node()?;
+    #[cfg(feature = "telemetry")]
+    {
+        ctx.telemetry.main_nodes += 1;
+    }
 
     if pos.rule50() >= 100 || pos.is_repetition() {
         return Ok(0);
@@ -120,13 +132,35 @@ pub(crate) fn search_node<E: Evaluator>(
     let mut stored_static_eval = NO_STATIC_EVAL;
 
     if let Some(hit) = ctx.tt.probe(hash, node.ply) {
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.tt_hits += 1;
+        }
         tt_move = hit.best_move;
         stored_static_eval = hit.static_eval;
         if hit.depth >= depth {
             match hit.bound {
-                Bound::Exact => return Ok(hit.score),
-                Bound::Lower if hit.score >= beta => return Ok(hit.score),
-                Bound::Upper if hit.score <= alpha => return Ok(hit.score),
+                Bound::Exact => {
+                    #[cfg(feature = "telemetry")]
+                    {
+                        ctx.telemetry.tt_cutoffs += 1;
+                    }
+                    return Ok(hit.score);
+                }
+                Bound::Lower if hit.score >= beta => {
+                    #[cfg(feature = "telemetry")]
+                    {
+                        ctx.telemetry.tt_cutoffs += 1;
+                    }
+                    return Ok(hit.score);
+                }
+                Bound::Upper if hit.score <= alpha => {
+                    #[cfg(feature = "telemetry")]
+                    {
+                        ctx.telemetry.tt_cutoffs += 1;
+                    }
+                    return Ok(hit.score);
+                }
                 _ => {}
             }
         }
@@ -139,8 +173,16 @@ pub(crate) fn search_node<E: Evaluator>(
         !node.pv_node && !in_check && depth >= PROBCUT_MIN_DEPTH && !is_mate_score(beta);
     let static_eval = if needs_static_eval(depth, can_selectively_prune) || need_probcut_eval {
         if stored_static_eval != NO_STATIC_EVAL {
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.tt_static_eval_reuses += 1;
+            }
             i32::from(stored_static_eval)
         } else {
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.eval_calls += 1;
+            }
             let score = evaluator.evaluate(pos);
             stored_static_eval = pack_static_eval(score);
             score
@@ -161,11 +203,19 @@ pub(crate) fn search_node<E: Evaluator>(
             evaluator,
         )?;
         if score < window_alpha {
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.razor_cutoffs += 1;
+            }
             return Ok(score);
         }
     }
 
     if should_prune_reverse_futility(depth, static_eval, beta, can_selectively_prune) {
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.rfp_cutoffs += 1;
+        }
         let score = static_eval - rfp_margin(depth);
         ctx.tt.store(
             hash,
@@ -180,6 +230,10 @@ pub(crate) fn search_node<E: Evaluator>(
     }
 
     if should_try_null_move(depth, static_eval, beta, can_selectively_prune) {
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.null_attempts += 1;
+        }
         evaluator.push_null_move();
         pos.make_null_move();
         let score = match search_node(
@@ -202,6 +256,10 @@ pub(crate) fn search_node<E: Evaluator>(
         evaluator.pop_move();
 
         if score >= beta {
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.null_cutoffs += 1;
+            }
             ctx.tt.store(
                 hash,
                 node.ply,
@@ -220,6 +278,10 @@ pub(crate) fn search_node<E: Evaluator>(
     }
 
     if should_try_probcut(depth, node, beta, in_check, static_eval) {
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.probcut_attempts += 1;
+        }
         if let Some((mv, score)) = try_probcut(pos, &analysis, depth, node, beta, ctx, evaluator)? {
             ctx.tt.store(
                 hash,
@@ -272,6 +334,10 @@ pub(crate) fn search_node<E: Evaluator>(
             if futility_score > best_score {
                 best_score = futility_score;
             }
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.futility_skips += 1;
+            }
             continue;
         }
 
@@ -284,6 +350,10 @@ pub(crate) fn search_node<E: Evaluator>(
             searched_moves,
             can_selectively_prune,
         ) {
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.late_quiet_skips += 1;
+            }
             continue;
         }
 
@@ -417,6 +487,10 @@ fn search_child<E: Evaluator>(
         searched_moves,
         try_null_window,
     ) {
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.lmr_attempts += 1;
+        }
         let reduced_depth =
             child_depth.saturating_sub(lmr_reduction(depth, searched_moves, node, history_score));
         let score = -search_node(
@@ -429,7 +503,15 @@ fn search_child<E: Evaluator>(
             evaluator,
         )?;
         if score <= alpha {
+            #[cfg(feature = "telemetry")]
+            {
+                ctx.telemetry.lmr_cutoffs += 1;
+            }
             return Ok(score);
+        }
+        #[cfg(feature = "telemetry")]
+        {
+            ctx.telemetry.lmr_researches += 1;
         }
     }
 

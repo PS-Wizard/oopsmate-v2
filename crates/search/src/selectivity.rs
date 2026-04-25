@@ -2,12 +2,12 @@ use oopsmate_core::{Move, MoveKind, Piece, Position};
 
 use crate::tune::{
     FUTILITY_MARGIN_1, FUTILITY_MARGIN_2, FUTILITY_MARGIN_3, FUTILITY_MARGIN_4, FUTILITY_MARGIN_5,
-    FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, LATE_QUIET_PRUNE_MAX_DEPTH,
-    LATE_QUIET_PRUNE_MIN_DEPTH, LATE_QUIET_PRUNE_MOVE_MULT, LATE_QUIET_PRUNE_MOVE_OFFSET,
-    LMR_FULL_DEPTH_MOVES, LMR_HISTORY_BAD, LMR_HISTORY_GOOD, LMR_MIN_DEPTH, NULL_MOVE_MIN_DEPTH,
-    PROBCUT_MARGIN, PROBCUT_MIN_DEPTH, PROBCUT_REDUCTION, RAZOR_MARGIN_1, RAZOR_MARGIN_2,
-    RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2, RFP_MARGIN_3, RFP_MARGIN_4,
-    RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
+    FUTILITY_MARGIN_6, FUTILITY_MARGIN_7, FUTILITY_MAX_DEPTH, IIR_CUT_MIN_DEPTH, IIR_PV_MIN_DEPTH,
+    LATE_QUIET_PRUNE_MAX_DEPTH, LATE_QUIET_PRUNE_MIN_DEPTH, LATE_QUIET_PRUNE_MOVE_MULT,
+    LATE_QUIET_PRUNE_MOVE_OFFSET, LMR_FULL_DEPTH_MOVES, LMR_HISTORY_BAD, LMR_HISTORY_GOOD,
+    LMR_MIN_DEPTH, NULL_MOVE_MIN_DEPTH, PROBCUT_MARGIN, PROBCUT_MIN_DEPTH, PROBCUT_REDUCTION,
+    RAZOR_MARGIN_1, RAZOR_MARGIN_2, RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2,
+    RFP_MARGIN_3, RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
 };
 use crate::types::is_mate_score;
 
@@ -110,6 +110,13 @@ pub(crate) fn should_try_null_move(
     can_selectively_prune: bool,
 ) -> bool {
     can_selectively_prune && depth >= NULL_MOVE_MIN_DEPTH && static_eval >= beta
+}
+
+#[inline(always)]
+pub(crate) fn should_apply_iir(depth: u8, node: NodeState, tt_move: Move) -> bool {
+    tt_move == Move::NULL
+        && ((node.pv_node && depth >= IIR_PV_MIN_DEPTH)
+            || (node.cut_node && depth >= IIR_CUT_MIN_DEPTH))
 }
 
 #[inline(always)]
@@ -276,6 +283,7 @@ fn has_non_pawn_material(pos: &Position) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oopsmate_core::Square;
 
     #[test]
     fn good_history_reduces_lmr() {
@@ -293,5 +301,22 @@ mod tests {
     fn probcut_uses_configured_reduction() {
         assert_eq!(probcut_depth(5), 1);
         assert_eq!(probcut_depth(8), 4);
+    }
+
+    #[test]
+    fn iir_uses_node_kind_thresholds() {
+        let pv = NodeState::new(1, true, -10, 10);
+        let cut = NodeState::new(1, false, -1, 0);
+        let all = NodeState::new(1, false, -10, 10);
+
+        assert!(should_apply_iir(IIR_PV_MIN_DEPTH, pv, Move::NULL));
+        assert!(should_apply_iir(IIR_CUT_MIN_DEPTH, cut, Move::NULL));
+        assert!(!should_apply_iir(IIR_CUT_MIN_DEPTH - 1, cut, Move::NULL));
+        assert!(!should_apply_iir(
+            IIR_PV_MIN_DEPTH,
+            pv,
+            Move::new(Square::from_raw(0), Square::from_raw(1), MoveKind::Quiet),
+        ));
+        assert!(!should_apply_iir(16, all, Move::NULL));
     }
 }

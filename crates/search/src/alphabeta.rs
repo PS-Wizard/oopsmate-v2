@@ -11,9 +11,9 @@ use crate::picker::{MovePicker, TtMode};
 use crate::qsearch::{qsearch, NO_STATIC_EVAL};
 use crate::selectivity::{
     can_use_selective_pruning, futility_margin, is_quiet_move, lmr_reduction, needs_static_eval,
-    null_move_depth, probcut_beta, probcut_depth, razor_margin, rfp_margin, should_prune_futility,
-    should_prune_late_quiet, should_prune_reverse_futility, should_reduce_lmr,
-    should_try_null_move, should_try_probcut, should_try_razoring, NodeState,
+    null_move_depth, probcut_beta, probcut_depth, razor_margin, rfp_margin, should_apply_iir,
+    should_prune_futility, should_prune_late_quiet, should_prune_reverse_futility,
+    should_reduce_lmr, should_try_null_move, should_try_probcut, should_try_razoring, NodeState,
 };
 use crate::tune::{PROBCUT_MIN_DEPTH, PVS_FULL_WINDOW_MOVES};
 use crate::types::{is_mate_score, mate_score};
@@ -97,7 +97,7 @@ fn probcut_candidate(pos: &Position, mv: Move) -> bool {
 
 pub(crate) fn search_node<E: Evaluator>(
     pos: &mut Position,
-    depth: u8,
+    mut depth: u8,
     node: NodeState,
     mut alpha: i32,
     beta: i32,
@@ -205,6 +205,10 @@ pub(crate) fn search_node<E: Evaluator>(
             );
             return Ok(beta);
         }
+    }
+
+    if should_apply_iir(depth, node, tt_move) {
+        depth -= 1;
     }
 
     if should_try_probcut(depth, node, beta, in_check, static_eval) {

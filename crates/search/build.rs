@@ -7,6 +7,8 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ("ASPIRATION_WINDOW", "i32", "150"),
     ("ASPIRATION_MAX_WINDOW", "i32", "1000"),
     ("NULL_MOVE_MIN_DEPTH", "u8", "4"),
+    ("IIR_PV_MIN_DEPTH", "u8", "4"),
+    ("IIR_CUT_MIN_DEPTH", "u8", "7"),
     ("PROBCUT_MIN_DEPTH", "u8", "5"),
     ("PROBCUT_MARGIN", "i32", "220"),
     ("PROBCUT_REDUCTION", "u8", "4"),

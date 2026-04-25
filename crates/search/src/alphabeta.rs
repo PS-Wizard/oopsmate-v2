@@ -1,4 +1,4 @@
-use oopsmate_core::{Move, MoveKind, Position};
+use oopsmate_core::{Move, MoveKind, Piece, Position};
 use oopsmate_eval::Evaluator;
 use oopsmate_memory::Bound;
 use oopsmate_movegen::{
@@ -101,6 +101,21 @@ fn probcut_candidate(pos: &Position, mv: Move) -> bool {
     let kind = mv.kind();
     kind.is_promotion()
         || ((kind.is_capture() || kind == MoveKind::EnPassant) && see_ge(pos, mv, 0))
+}
+
+#[derive(Clone, Copy)]
+struct CaptureHistoryRecord {
+    moved: Piece,
+    to: usize,
+    captured: Piece,
+}
+
+impl CaptureHistoryRecord {
+    const EMPTY: Self = Self {
+        moved: Piece::Pawn,
+        to: 0,
+        captured: Piece::Pawn,
+    };
 }
 
 pub(crate) fn search_node<E: Evaluator>(
@@ -309,6 +324,8 @@ pub(crate) fn search_node<E: Evaluator>(
     let mut searched_moves = 0usize;
     let mut searched_quiets = [Move::NULL; MAX_MOVES];
     let mut searched_quiet_count = 0usize;
+    let mut searched_captures = [CaptureHistoryRecord::EMPTY; MAX_MOVES];
+    let mut searched_capture_count = 0usize;
 
     while let Some(mv) = picker.next_move(pos, &analysis, &*ctx.history) {
         saw_legal_move = true;
@@ -319,6 +336,7 @@ pub(crate) fn search_node<E: Evaluator>(
         } else {
             0
         };
+        let capture_record = capture_history_record(pos, mv);
 
         if should_prune_futility(
             mv,
@@ -388,6 +406,9 @@ pub(crate) fn search_node<E: Evaluator>(
         if quiet {
             searched_quiets[searched_quiet_count] = mv;
             searched_quiet_count += 1;
+        } else if let Some(record) = capture_record {
+            searched_captures[searched_capture_count] = record;
+            searched_capture_count += 1;
         }
 
         if score > best_score {
@@ -400,6 +421,23 @@ pub(crate) fn search_node<E: Evaluator>(
                 ctx.history.reward_quiet_cutoff(side, mv, depth);
                 for &failed in &searched_quiets[..searched_quiet_count.saturating_sub(1)] {
                     ctx.history.penalize_quiet_fail(side, failed, depth);
+                }
+            } else if let Some(record) = capture_record {
+                ctx.history.reward_capture_cutoff(
+                    side,
+                    record.moved,
+                    record.to,
+                    record.captured,
+                    depth,
+                );
+                for failed in &searched_captures[..searched_capture_count.saturating_sub(1)] {
+                    ctx.history.penalize_capture_fail(
+                        side,
+                        failed.moved,
+                        failed.to,
+                        failed.captured,
+                        depth,
+                    );
                 }
             }
             ctx.tt.store(
@@ -456,6 +494,30 @@ pub(crate) fn search_node<E: Evaluator>(
 fn pack_static_eval(score: i32) -> i16 {
     debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
     score as i16
+}
+
+#[inline(always)]
+fn capture_history_record(pos: &Position, mv: Move) -> Option<CaptureHistoryRecord> {
+    let kind = mv.kind();
+    if kind.is_promotion() || !(kind.is_capture() || kind == MoveKind::EnPassant) {
+        return None;
+    }
+
+    let moved = pos
+        .piece_at(mv.from())
+        .map_or(Piece::Pawn, |(piece, _)| piece);
+    let captured = if kind == MoveKind::EnPassant {
+        Piece::Pawn
+    } else {
+        pos.piece_at(mv.to())
+            .map_or(Piece::Pawn, |(piece, _)| piece)
+    };
+
+    Some(CaptureHistoryRecord {
+        moved,
+        to: mv.to().index(),
+        captured,
+    })
 }
 
 #[inline(always)]

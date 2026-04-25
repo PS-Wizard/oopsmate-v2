@@ -158,7 +158,7 @@ impl MovePicker {
             let mv = self.moves.as_slice()[index];
             let score = match self.phase {
                 Phase::Quiets => history.score(self.side, mv),
-                Phase::Captures | Phase::Evasions => score_move(pos, mv),
+                Phase::Captures | Phase::Evasions => score_move(pos, mv, self.side, history),
                 Phase::Tt | Phase::Done => unreachable!(),
             };
             self.write_score(index, score);
@@ -236,7 +236,7 @@ const PIECE_VALUES: [i32; 6] = [100, 320, 330, 500, 900, 0];
 const CAPTURE_VICTIM_SCALE: i32 = 8;
 
 #[inline(always)]
-fn score_move(pos: &Position, mv: Move) -> i16 {
+fn score_move(pos: &Position, mv: Move, side: Color, history: &HistoryTable) -> i16 {
     let kind = mv.kind();
     let mut score = 0;
 
@@ -264,7 +264,8 @@ fn score_move(pos: &Position, mv: Move) -> i16 {
         };
 
         score += base + PIECE_VALUES[captured.index()] * CAPTURE_VICTIM_SCALE
-            - PIECE_VALUES[attacker.index()];
+            - PIECE_VALUES[attacker.index()]
+            + i32::from(history.capture_score(side, attacker, mv.to().index(), captured));
     }
 
     debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);

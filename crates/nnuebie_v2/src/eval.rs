@@ -26,6 +26,14 @@ pub struct EvalOutput {
     pub used_smallnet: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct RawEvalOutput {
+    psqt: i32,
+    positional: i32,
+    final_raw: i32,
+    used_smallnet: bool,
+}
+
 impl EvalOutput {
     pub const ZERO: Self = Self {
         psqt: 0,
@@ -46,6 +54,15 @@ impl EvalOutput {
     }
 }
 
+impl RawEvalOutput {
+    const ZERO: Self = Self {
+        psqt: 0,
+        positional: 0,
+        final_raw: 0,
+        used_smallnet: false,
+    };
+}
+
 impl NnueNetworks {
     pub fn reset_context(&self, position: &Position, ctx: &mut NnueContext) {
         ctx.finny.prepare(
@@ -57,11 +74,11 @@ impl NnueNetworks {
         refresh_frame_small(&self.small, position, ctx, 0);
     }
 
-    #[must_use]
-    pub fn evaluate(&self, position: &Position, ctx: &mut NnueContext) -> EvalOutput {
+    #[inline(always)]
+    fn evaluate_raw_output(&self, position: &Position, ctx: &mut NnueContext) -> RawEvalOutput {
         let inputs = self.position_inputs(position);
         if inputs.piece_count == 0 {
-            return EvalOutput::ZERO;
+            return RawEvalOutput::ZERO;
         }
 
         if !ctx.initialized {
@@ -101,12 +118,36 @@ impl NnueNetworks {
         final_raw -= final_raw * i32::from(inputs.rule50) / 212;
         final_raw = final_raw.clamp(VALUE_TB_LOSS_IN_MAX_PLY + 1, VALUE_TB_WIN_IN_MAX_PLY - 1);
 
-        EvalOutput {
+        RawEvalOutput {
             psqt,
             positional,
             final_raw,
-            final_cp: to_centipawns(final_raw, position),
             used_smallnet,
+        }
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub fn evaluate_raw(&self, position: &Position, ctx: &mut NnueContext) -> i32 {
+        self.evaluate_raw_output(position, ctx).final_raw
+    }
+
+    #[inline(always)]
+    #[must_use]
+    pub fn raw_to_cp(&self, value: i32, position: &Position) -> i32 {
+        to_centipawns(value, position)
+    }
+
+    #[must_use]
+    pub fn evaluate(&self, position: &Position, ctx: &mut NnueContext) -> EvalOutput {
+        let raw = self.evaluate_raw_output(position, ctx);
+
+        EvalOutput {
+            psqt: raw.psqt,
+            positional: raw.positional,
+            final_raw: raw.final_raw,
+            final_cp: self.raw_to_cp(raw.final_raw, position),
+            used_smallnet: raw.used_smallnet,
         }
     }
 }

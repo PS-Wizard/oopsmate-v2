@@ -8,6 +8,7 @@ use crate::tune::{
     LMR_MIN_DEPTH, NULL_MOVE_MIN_DEPTH, PROBCUT_MARGIN, PROBCUT_MIN_DEPTH, PROBCUT_REDUCTION,
     RAZOR_MARGIN_1, RAZOR_MARGIN_2, RAZOR_MARGIN_3, RAZOR_MAX_DEPTH, RFP_MARGIN_1, RFP_MARGIN_2,
     RFP_MARGIN_3, RFP_MARGIN_4, RFP_MARGIN_5, RFP_MARGIN_6, RFP_MARGIN_7, RFP_MAX_DEPTH,
+    scale_eval,
 };
 use crate::types::is_mate_score;
 
@@ -72,11 +73,11 @@ pub(crate) fn should_try_razoring(
 
 #[inline(always)]
 pub(crate) const fn razor_margin(depth: u8) -> i32 {
-    match depth {
+    scale_eval(match depth {
         1 => RAZOR_MARGIN_1,
         2 => RAZOR_MARGIN_2,
         _ => RAZOR_MARGIN_3,
-    }
+    })
 }
 
 #[inline(always)]
@@ -91,7 +92,7 @@ pub(crate) fn should_prune_reverse_futility(
 
 #[inline(always)]
 pub(crate) const fn rfp_margin(depth: u8) -> i32 {
-    match depth {
+    scale_eval(match depth {
         1 => RFP_MARGIN_1,
         2 => RFP_MARGIN_2,
         3 => RFP_MARGIN_3,
@@ -99,7 +100,7 @@ pub(crate) const fn rfp_margin(depth: u8) -> i32 {
         5 => RFP_MARGIN_5,
         6 => RFP_MARGIN_6,
         _ => RFP_MARGIN_7,
-    }
+    })
 }
 
 #[inline(always)]
@@ -131,12 +132,12 @@ pub(crate) fn should_try_probcut(
         && !in_check
         && !is_mate_score(beta)
         && depth >= PROBCUT_MIN_DEPTH
-        && static_eval >= beta - PROBCUT_MARGIN
+        && static_eval >= beta - scale_eval(PROBCUT_MARGIN)
 }
 
 #[inline(always)]
 pub(crate) const fn probcut_beta(beta: i32) -> i32 {
-    beta + PROBCUT_MARGIN
+    beta + scale_eval(PROBCUT_MARGIN)
 }
 
 #[inline(always)]
@@ -147,7 +148,7 @@ pub(crate) const fn probcut_depth(depth: u8) -> u8 {
 #[inline(always)]
 pub(crate) fn null_move_depth(depth: u8, static_eval: i32, beta: i32) -> u8 {
     let eval_excess = static_eval.saturating_sub(beta).max(0);
-    let reduction_bonus = (eval_excess / 200).min(4) as u8;
+    let reduction_bonus = (eval_excess / scale_eval(200)).min(4) as u8;
     let reduction = depth / 3 + 3 + reduction_bonus;
     depth.saturating_sub(reduction)
 }
@@ -197,7 +198,7 @@ pub(crate) const fn late_quiet_prune_moves(depth: u8) -> usize {
 
 #[inline(always)]
 pub(crate) const fn futility_margin(depth: u8) -> i32 {
-    match depth {
+    scale_eval(match depth {
         1 => FUTILITY_MARGIN_1,
         2 => FUTILITY_MARGIN_2,
         3 => FUTILITY_MARGIN_3,
@@ -205,7 +206,7 @@ pub(crate) const fn futility_margin(depth: u8) -> i32 {
         5 => FUTILITY_MARGIN_5,
         6 => FUTILITY_MARGIN_6,
         _ => FUTILITY_MARGIN_7,
-    }
+    })
 }
 
 #[inline(always)]

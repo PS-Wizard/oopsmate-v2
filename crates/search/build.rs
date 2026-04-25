@@ -2,6 +2,7 @@ use std::{env, fs, path::PathBuf};
 
 const DEFAULTS: &[(&str, &str, &str)] = &[
     ("MAX_SEARCH_DEPTH", "u8", "64"),
+    ("EVAL_SCORE_SCALE", "i32", "3"),
     ("PVS_FULL_WINDOW_MOVES", "usize", "2"),
     ("ASPIRATION_MIN_DEPTH", "u8", "5"),
     ("ASPIRATION_WINDOW", "i32", "150"),

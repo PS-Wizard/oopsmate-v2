@@ -25,14 +25,18 @@ fn assert_incremental_matches_full(
     incremental_ctx: &mut NnueContext,
 ) {
     let incremental = networks.evaluate(position, incremental_ctx);
+    let incremental_raw = networks.evaluate_raw(position, incremental_ctx);
 
     let mut full_ctx = NnueContext::new();
     networks.reset_context(position, &mut full_ctx);
     let full = networks.evaluate(position, &mut full_ctx);
+    let full_raw = networks.evaluate_raw(position, &mut full_ctx);
 
     assert_eq!(incremental.psqt, full.psqt);
     assert_eq!(incremental.positional, full.positional);
     assert_eq!(incremental.final_raw, full.final_raw);
+    assert_eq!(incremental.final_raw, incremental_raw);
+    assert_eq!(full.final_raw, full_raw);
     assert_eq!(incremental.final_cp, full.final_cp);
     assert_eq!(incremental.used_smallnet, full.used_smallnet);
 }

@@ -10,7 +10,7 @@ use crate::control::{SearchContext, SearchInterrupted};
 use crate::limits::SearchLimits;
 use crate::selectivity::NodeState;
 use crate::tune::{
-    ASPIRATION_MAX_WINDOW, ASPIRATION_MIN_DEPTH, ASPIRATION_WINDOW, MAX_SEARCH_DEPTH,
+    ASPIRATION_MAX_WINDOW, ASPIRATION_MIN_DEPTH, ASPIRATION_WINDOW, MAX_SEARCH_DEPTH, scale_eval,
 };
 use crate::types::{is_mate_score, mate_score, SearchResult};
 
@@ -76,9 +76,10 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
     if let Some(hit) = ctx.tt.probe(pos.hash(), 0) {
         seed_root_tt_move(&root_moves, &mut root_scores, hit.best_move);
     }
+    let mut best_raw_score = evaluator.evaluate(&pos);
     let mut best = SearchResult {
         best_move: Some(fallback_move),
-        score: evaluator.evaluate(&pos),
+        score: report_score(evaluator, &pos, best_raw_score),
         depth: 0,
         nodes: 0,
         time_ms: 0,
@@ -97,14 +98,15 @@ pub fn search_with_reporter<E: Evaluator, F: FnMut(&SearchResult)>(
             &mut root_moves,
             &mut root_scores,
             depth,
-            best.score,
+            best_raw_score,
             best.depth != 0,
             &mut ctx,
             evaluator,
         ) {
-            Ok((best_move, score)) => {
+            Ok((best_move, raw_score)) => {
+                best_raw_score = raw_score;
                 best.best_move = Some(best_move);
-                best.score = score;
+                best.score = report_score(evaluator, &pos, raw_score);
                 best.depth = depth;
                 best.nodes = ctx.nodes();
                 best.time_ms = ctx.elapsed_ms();
@@ -149,7 +151,8 @@ fn search_root_aspirated<E: Evaluator>(
         );
     }
 
-    let mut delta = ASPIRATION_WINDOW;
+    let mut delta = scale_eval(ASPIRATION_WINDOW);
+    let aspiration_max = scale_eval(ASPIRATION_MAX_WINDOW);
     let mut alpha = previous_score.saturating_sub(delta).max(alpha_min());
     let mut beta = previous_score.saturating_add(delta).min(beta_max());
 
@@ -167,7 +170,7 @@ fn search_root_aspirated<E: Evaluator>(
         )?;
         if score <= alpha {
             delta = next_aspiration_delta(delta);
-            if delta > ASPIRATION_MAX_WINDOW {
+            if delta > aspiration_max {
                 order_root_moves(root_moves, root_scores);
                 return search_root(
                     pos,
@@ -183,7 +186,7 @@ fn search_root_aspirated<E: Evaluator>(
             alpha = score.saturating_sub(delta).max(alpha_min());
         } else if score >= beta {
             delta = next_aspiration_delta(delta);
-            if delta > ASPIRATION_MAX_WINDOW {
+            if delta > aspiration_max {
                 order_root_moves(root_moves, root_scores);
                 return search_root(
                     pos,
@@ -278,6 +281,15 @@ fn use_aspiration(depth: u8, previous_score: i32, has_previous_score: bool) -> b
 #[inline(always)]
 fn next_aspiration_delta(delta: i32) -> i32 {
     delta.saturating_mul(2)
+}
+
+#[inline(always)]
+fn report_score<E: Evaluator>(evaluator: &mut E, position: &Position, score: i32) -> i32 {
+    if is_mate_score(score) {
+        score
+    } else {
+        evaluator.score_to_cp(score, position)
+    }
 }
 
 fn order_root_moves(root_moves: &mut MoveList, root_scores: &mut [i32; MAX_MOVES]) {

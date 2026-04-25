@@ -7,7 +7,7 @@ use oopsmate_movegen::{
 };
 
 use crate::control::{SearchContext, SearchInterrupted};
-use crate::tune::{QSEARCH_CAPTURE_BASE, QSEARCH_DELTA_MARGIN, QSEARCH_PROMOTION_BASE};
+use crate::tune::{QSEARCH_CAPTURE_BASE, QSEARCH_DELTA_MARGIN, QSEARCH_PROMOTION_BASE, scale_eval};
 use crate::types::{is_mate_score, mate_score};
 
 pub(crate) const NO_STATIC_EVAL: i16 = i16::MIN;
@@ -316,7 +316,7 @@ fn delta_prune_move(pos: &Position, mv: Move, static_eval: i32, alpha: i32) -> b
     }
 
     let captured = captured_piece(pos, mv);
-    static_eval + PIECE_VALUES[captured.index()] + QSEARCH_DELTA_MARGIN <= alpha
+    static_eval + delta_piece_value(captured) + scale_eval(QSEARCH_DELTA_MARGIN) <= alpha
 }
 
 #[inline(always)]
@@ -348,6 +348,11 @@ fn score_qmove(pos: &Position, mv: Move) -> i16 {
 
     debug_assert!(score >= i16::MIN as i32 && score <= i16::MAX as i32);
     score as i16
+}
+
+#[inline(always)]
+const fn delta_piece_value(piece: Piece) -> i32 {
+    scale_eval(PIECE_VALUES[piece.index()])
 }
 
 #[inline(always)]
@@ -393,7 +398,12 @@ mod tests {
         let pos = Position::from_fen("4k3/3P4/8/8/8/8/8/4K3 w - - 0 1").unwrap();
         let promotion = Move::new(square("d7"), square("d8"), MoveKind::PromotionQueen);
 
-        assert!(!delta_prune_move(&pos, promotion, -1000, 500));
+        assert!(!delta_prune_move(
+            &pos,
+            promotion,
+            scale_eval(-1000),
+            scale_eval(500),
+        ));
     }
 
     #[test]
@@ -401,6 +411,6 @@ mod tests {
         let pos = Position::from_fen("4k3/8/8/8/8/8/p7/R3K3 w - - 0 1").unwrap();
         let capture = Move::new(square("a1"), square("a2"), MoveKind::Capture);
 
-        assert!(delta_prune_move(&pos, capture, -600, 0));
+        assert!(delta_prune_move(&pos, capture, scale_eval(-600), 0));
     }
 }

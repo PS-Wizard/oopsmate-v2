@@ -16,6 +16,11 @@ pub trait Evaluator {
     #[inline(always)]
     fn pop_move(&mut self) {}
 
+    #[inline(always)]
+    fn score_to_cp(&mut self, score: i32, _position: &Position) -> i32 {
+        score
+    }
+
     fn evaluate(&mut self, position: &Position) -> i32;
 }
 
@@ -62,7 +67,12 @@ impl Evaluator for NnueEval {
     }
 
     #[inline(always)]
+    fn score_to_cp(&mut self, score: i32, position: &Position) -> i32 {
+        self.networks.raw_to_cp(score, position)
+    }
+
+    #[inline(always)]
     fn evaluate(&mut self, position: &Position) -> i32 {
-        self.networks.evaluate(position, &mut self.context).final_cp
+        self.networks.evaluate_raw(position, &mut self.context)
     }
 }
